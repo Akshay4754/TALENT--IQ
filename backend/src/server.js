@@ -1,6 +1,8 @@
 import express from "express";
 import path from "path";
 import { ENV } from "./lib/env.js";
+import { connect } from "http2";
+import { connectDB } from "./lib/db.js";
 const app = express();
 const __dirname = path.resolve();
 
@@ -19,6 +21,12 @@ app.get("/{*any}", (req, res) => {
 res.sendFile(path.join(__dirname, "../frontend", "dist", "index.html"));
 });
 }
+const startServer = async () => {
+try {
+await connectDB();
 app.listen(ENV.PORT, () => console.log("Server is running on port:", ENV.PORT));
-
-export default app;
+} catch (error) {
+console.error("✶ Error starting the server", error);
+}
+};
+startServer();
