@@ -1,8 +1,9 @@
 import { Inngest } from "inngest";
 import { connectDB } from "./db.js";   // ✅ FIXED
 import User from "../models/User.js";
-import { upsertStreamUser } from "../stream/stream.js";
-import { deleteStreamUser } from "../stream/stream.js";
+import { upsertStreamUser, deleteStreamUser } from "./stream.js";
+import { upsertStreamUser, deleteStreamUser } from "./stream.js";
+
 
 export const inngest = new Inngest({ id: "talent-iq" });
 
