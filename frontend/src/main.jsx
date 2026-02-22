@@ -5,6 +5,7 @@ import App from "./App.jsx";
 import { ClerkProvider } from "@clerk/clerk-react";
 import { BrowserRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import AuthInterceptor from "./components/AuthInterceptor.jsx";
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -19,7 +20,9 @@ createRoot(document.getElementById("root")).render(
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
         <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
-          <App />
+          <AuthInterceptor>
+            <App />
+          </AuthInterceptor>
         </ClerkProvider>
       </QueryClientProvider>
     </BrowserRouter>
