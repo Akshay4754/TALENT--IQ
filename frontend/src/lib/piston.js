@@ -1,70 +1,84 @@
-// Piston API is a service for code execution
+// Judge0 CE API for code execution
+// Using the public Judge0 instance
 
-const PISTON_API = "https://emkc.org/api/v2/piston";
+const JUDGE0_API = "https://judge0-ce.p.rapidapi.com";
 
-const LANGUAGE_VERSIONS = {
-  javascript: { language: "javascript", version: "18.15.0" },
-  python: { language: "python", version: "3.10.0" },
-  java: { language: "java", version: "15.0.2" },
-  cpp: { language: "c++", version: "10.2.0" },
+// Judge0 language IDs
+const LANGUAGE_IDS = {
+  javascript: 63, // JavaScript (Node.js 12.14.0)
+  python: 71, // Python (3.8.1)
+  java: 62, // Java (OpenJDK 13.0.1)
+  cpp: 54, // C++ (GCC 9.2.0)
 };
 
 /**
  * @param {string} language - programming language
- * @param {string} code - source code to executed
+ * @param {string} code - source code to execute
  * @returns {Promise<{success:boolean, output?:string, error?: string}>}
  */
 export async function executeCode(language, code) {
   try {
-    const languageConfig = LANGUAGE_VERSIONS[language];
+    const languageId = LANGUAGE_IDS[language];
 
-    if (!languageConfig) {
+    if (!languageId) {
       return {
         success: false,
         error: `Unsupported language: ${language}`,
       };
     }
 
-    const response = await fetch(`${PISTON_API}/execute`, {
+    // Submit code for execution
+    const submitResponse = await fetch(`${JUDGE0_API}/submissions?base64_encoded=true&wait=true`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-RapidAPI-Key": import.meta.env.VITE_RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
       },
       body: JSON.stringify({
-        language: languageConfig.language,
-        version: languageConfig.version,
-        files: [
-          {
-            name: `main.${getFileExtension(language)}`,
-            content: code,
-          },
-        ],
+        language_id: languageId,
+        source_code: btoa(unescape(encodeURIComponent(code))),
+        stdin: "",
       }),
     });
 
-    if (!response.ok) {
+    if (!submitResponse.ok) {
       return {
         success: false,
-        error: `HTTP error! status: ${response.status}`,
+        error: `HTTP error! status: ${submitResponse.status}`,
       };
     }
 
-    const data = await response.json();
+    const result = await submitResponse.json();
 
-    const output = data.run.output || "";
-    const stderr = data.run.stderr || "";
+    // Decode base64 outputs
+    const stdout = result.stdout ? decodeURIComponent(escape(atob(result.stdout))) : "";
+    const stderr = result.stderr ? decodeURIComponent(escape(atob(result.stderr))) : "";
+    const compileOutput = result.compile_output
+      ? decodeURIComponent(escape(atob(result.compile_output)))
+      : "";
 
-    if (stderr) {
+    // Status id 3 = Accepted (successful execution)
+    if (result.status?.id === 3) {
       return {
-        success: false,
-        output: output,
-        error: stderr,
+        success: true,
+        output: stdout || "No output",
       };
     }
 
+    // Compilation error
+    if (result.status?.id === 6) {
+      return {
+        success: false,
+        error: compileOutput || "Compilation error",
+      };
+    }
+
+    // Runtime error or other failure
     return {
-      success: true,
-      output: output || "No output",
+      success: false,
+      output: stdout,
+      error: stderr || compileOutput || result.status?.description || "Execution failed",
     };
   } catch (error) {
     return {
@@ -72,15 +86,4 @@ export async function executeCode(language, code) {
       error: `Failed to execute code: ${error.message}`,
     };
   }
-}
-
-function getFileExtension(language) {
-  const extensions = {
-    javascript: "js",
-    python: "py",
-    java: "java",
-    cpp: "cpp",
-  };
-
-  return extensions[language] || "txt";
 }
