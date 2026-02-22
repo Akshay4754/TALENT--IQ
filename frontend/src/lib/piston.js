@@ -1,7 +1,7 @@
 // Judge0 CE API for code execution
-// Using the public Judge0 instance
+// Using the free public Judge0 instance
 
-const JUDGE0_API = "https://judge0-ce.p.rapidapi.com";
+const JUDGE0_API = "https://ce.judge0.com";
 
 // Judge0 language IDs
 const LANGUAGE_IDS = {
@@ -32,8 +32,6 @@ export async function executeCode(language, code) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-RapidAPI-Key": import.meta.env.VITE_RAPIDAPI_KEY,
-        "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
       },
       body: JSON.stringify({
         language_id: languageId,
