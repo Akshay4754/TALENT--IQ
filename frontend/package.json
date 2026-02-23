@@ -27,7 +27,13 @@
     "stream-chat": "^9.23.0",
     "stream-chat-react": "^13.9.0",
     "tailwindcss": "^4.1.14",
-    "talent-iq": "file:.."
+    "@clerk/express": "^1.7.41",
+    "@stream-io/node-sdk": "^0.7.12",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "inngest": "^3.44.3",
+    "mongoose": "^8.19.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
