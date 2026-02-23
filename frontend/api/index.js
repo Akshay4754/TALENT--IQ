@@ -1,12 +1,7 @@
 import express from "express";
-import { serve } from "inngest/express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
-import { StreamChat } from "stream-chat";
-import { StreamClient } from "@stream-io/node-sdk";
-import { Inngest } from "inngest";
-import { clerkMiddleware, requireAuth, clerkClient } from "@clerk/express";
 
 // ============================================================
 // ENV
@@ -18,9 +13,36 @@ const ENV = {
   CLIENT_URL: process.env.CLIENT_URL,
   STREAM_API_KEY: process.env.STREAM_API_KEY,
   STREAM_API_SECRET: process.env.STREAM_API_SECRET,
-  INNGEST_EVENT_KEY: process.env.INNGEST_EVENT_KEY,
-  INNGEST_SIGNING_KEY: process.env.INNGEST_SIGNING_KEY,
+  CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
+  CLERK_PUBLISHABLE_KEY: process.env.CLERK_PUBLISHABLE_KEY,
 };
+
+// ============================================================
+// EXPRESS APP (minimal debug version)
+// ============================================================
+const app = express();
+app.use(express.json());
+app.use(cors({ origin: true, credentials: true }));
+
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    msg: "api is up and running",
+    envCheck: {
+      DB_URL: !!ENV.DB_URL,
+      STREAM_API_KEY: !!ENV.STREAM_API_KEY,
+      STREAM_API_SECRET: !!ENV.STREAM_API_SECRET,
+      CLIENT_URL: ENV.CLIENT_URL || "NOT SET",
+      CLERK_SECRET_KEY: !!ENV.CLERK_SECRET_KEY,
+      CLERK_PUBLISHABLE_KEY: !!ENV.CLERK_PUBLISHABLE_KEY,
+    },
+  });
+});
+
+app.all("/api/(.*)", (req, res) => {
+  res.status(200).json({ msg: "API catch-all route hit", path: req.path, method: req.method });
+});
+
+export default app;
 
 // ============================================================
 // DATABASE
@@ -100,7 +122,11 @@ const syncUser = inngest.createFunction(
       profileImage: image_url,
     };
     await User.create(newUser);
-    await upsertStreamUser({ id: newUser.clerkId, name: newUser.name, image: newUser.profileImage });
+    await upsertStreamUser({
+      id: newUser.clerkId,
+      name: newUser.name,
+      image: newUser.profileImage,
+    });
   }
 );
 
@@ -111,7 +137,11 @@ const deleteUserFromDB = inngest.createFunction(
     await connectDB();
     const { id } = event.data;
     await User.deleteOne({ clerkId: id });
-    try { await chatClient.deleteUser(id); } catch (e) { console.error("Error deleting Stream user:", e); }
+    try {
+      await chatClient.deleteUser(id);
+    } catch (e) {
+      console.error("Error deleting Stream user:", e);
+    }
   }
 );
 
@@ -131,7 +161,9 @@ const protectRoute = [
 
       if (!user) {
         try {
-          let name = "User", email = "", profileImage = "";
+          let name = "User",
+            email = "",
+            profileImage = "";
           try {
             const clerkUser = await clerkClient.users.getUser(clerkId);
             email = clerkUser.emailAddresses?.[0]?.emailAddress || "";
@@ -143,7 +175,9 @@ const protectRoute = [
           user = await User.create({ clerkId, email, name, profileImage });
           try {
             await upsertStreamUser({ id: user.clerkId, name: user.name, image: user.profileImage });
-          } catch (e) { console.log("Stream upsert failed:", e.message); }
+          } catch (e) {
+            console.log("Stream upsert failed:", e.message);
+          }
         } catch (createError) {
           console.error("Error auto-creating user:", createError);
           return res.status(404).json({ message: "User not found" });
@@ -167,17 +201,23 @@ async function createSession(req, res) {
     const { problem, difficulty } = req.body;
     const userId = req.user._id;
     const clerkId = req.user.clerkId;
-    if (!problem || !difficulty) return res.status(400).json({ message: "Problem and difficulty are required" });
+    if (!problem || !difficulty)
+      return res.status(400).json({ message: "Problem and difficulty are required" });
 
     const callId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const session = await Session.create({ problem, difficulty, host: userId, callId });
 
     await streamClient.video.call("default", callId).getOrCreate({
-      data: { created_by_id: clerkId, custom: { problem, difficulty, sessionId: session._id.toString() } },
+      data: {
+        created_by_id: clerkId,
+        custom: { problem, difficulty, sessionId: session._id.toString() },
+      },
     });
 
     const channel = chatClient.channel("messaging", callId, {
-      name: `${problem} Session`, created_by_id: clerkId, members: [clerkId],
+      name: `${problem} Session`,
+      created_by_id: clerkId,
+      members: [clerkId],
     });
     await channel.create();
 
@@ -193,7 +233,8 @@ async function getActiveSessions(_, res) {
     const sessions = await Session.find({ status: "active" })
       .populate("host", "name profileImage email clerkId")
       .populate("participant", "name profileImage email clerkId")
-      .sort({ createdAt: -1 }).limit(20);
+      .sort({ createdAt: -1 })
+      .limit(20);
     res.status(200).json({ sessions });
   } catch (error) {
     console.log("Error in getActiveSessions:", error.message);
@@ -205,8 +246,11 @@ async function getMyRecentSessions(req, res) {
   try {
     const userId = req.user._id;
     const sessions = await Session.find({
-      status: "completed", $or: [{ host: userId }, { participant: userId }],
-    }).sort({ createdAt: -1 }).limit(20);
+      status: "completed",
+      $or: [{ host: userId }, { participant: userId }],
+    })
+      .sort({ createdAt: -1 })
+      .limit(20);
     res.status(200).json({ sessions });
   } catch (error) {
     console.log("Error in getMyRecentSessions:", error.message);
@@ -233,8 +277,10 @@ async function joinSession(req, res) {
     const clerkId = req.user.clerkId;
     const session = await Session.findById(req.params.id);
     if (!session) return res.status(404).json({ message: "Session not found" });
-    if (session.status !== "active") return res.status(400).json({ message: "Cannot join a completed session" });
-    if (session.host.toString() === userId.toString()) return res.status(400).json({ message: "Host cannot join own session" });
+    if (session.status !== "active")
+      return res.status(400).json({ message: "Cannot join a completed session" });
+    if (session.host.toString() === userId.toString())
+      return res.status(400).json({ message: "Host cannot join own session" });
     if (session.participant) return res.status(409).json({ message: "Session is full" });
 
     session.participant = userId;
@@ -253,8 +299,10 @@ async function endSession(req, res) {
     const userId = req.user._id;
     const session = await Session.findById(req.params.id);
     if (!session) return res.status(404).json({ message: "Session not found" });
-    if (session.host.toString() !== userId.toString()) return res.status(403).json({ message: "Only host can end session" });
-    if (session.status === "completed") return res.status(400).json({ message: "Session already completed" });
+    if (session.host.toString() !== userId.toString())
+      return res.status(403).json({ message: "Only host can end session" });
+    if (session.status === "completed")
+      return res.status(400).json({ message: "Session already completed" });
 
     const call = streamClient.video.call("default", session.callId);
     await call.delete({ hard: true });
@@ -277,7 +325,10 @@ async function getStreamToken(req, res) {
   try {
     const token = chatClient.createToken(req.user.clerkId);
     res.status(200).json({
-      token, userId: req.user.clerkId, userName: req.user.name, userImage: req.user.profileImage,
+      token,
+      userId: req.user.clerkId,
+      userName: req.user.name,
+      userImage: req.user.profileImage,
     });
   } catch (error) {
     console.log("Error in getStreamToken:", error.message);
@@ -291,13 +342,15 @@ async function getStreamToken(req, res) {
 const app = express();
 
 app.use(express.json());
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    callback(null, true);
-  },
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      callback(null, true);
+    },
+    credentials: true,
+  })
+);
 
 // DB middleware
 app.use(async (req, res, next) => {
