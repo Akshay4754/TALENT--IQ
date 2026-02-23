@@ -57,14 +57,34 @@ const sessionSchema = new mongoose.Schema(
 const Session = mongoose.models.Session || mongoose.model("Session", sessionSchema);
 
 // ============================================================
-// STREAM CLIENTS
+// STREAM CLIENTS (lazy - initialized on first use)
 // ============================================================
-const chatClient = StreamChat.getInstance(ENV.STREAM_API_KEY, ENV.STREAM_API_SECRET);
-const streamClient = new StreamClient(ENV.STREAM_API_KEY, ENV.STREAM_API_SECRET);
+let chatClient = null;
+let streamClient = null;
+
+function getChatClient() {
+  if (!chatClient) {
+    const key = process.env.STREAM_API_KEY;
+    const secret = process.env.STREAM_API_SECRET;
+    if (!key || !secret) throw new Error("STREAM_API_KEY or STREAM_API_SECRET is missing");
+    chatClient = StreamChat.getInstance(key, secret);
+  }
+  return chatClient;
+}
+
+function getStreamClient() {
+  if (!streamClient) {
+    const key = process.env.STREAM_API_KEY;
+    const secret = process.env.STREAM_API_SECRET;
+    if (!key || !secret) throw new Error("STREAM_API_KEY or STREAM_API_SECRET is missing");
+    streamClient = new StreamClient(key, secret);
+  }
+  return streamClient;
+}
 
 const upsertStreamUser = async (userData) => {
   try {
-    await chatClient.upsertUser(userData);
+    await getChatClient().upsertUser(userData);
   } catch (error) {
     console.error("Error upserting Stream user:", error);
   }
@@ -99,7 +119,7 @@ const deleteUserFromDB = inngest.createFunction(
     await connectDB();
     const { id } = event.data;
     await User.deleteOne({ clerkId: id });
-    try { await chatClient.deleteUser(id); } catch (e) { console.error(e); }
+    try { await getChatClient().deleteUser(id); } catch (e) { console.error(e); }
   }
 );
 
@@ -157,10 +177,10 @@ async function createSession(req, res) {
     if (!problem || !difficulty) return res.status(400).json({ message: "Problem and difficulty are required" });
     const callId = `session_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const session = await Session.create({ problem, difficulty, host: userId, callId });
-    await streamClient.video.call("default", callId).getOrCreate({
+    await getStreamClient().video.call("default", callId).getOrCreate({
       data: { created_by_id: clerkId, custom: { problem, difficulty, sessionId: session._id.toString() } },
     });
-    const channel = chatClient.channel("messaging", callId, {
+    const channel = getChatClient().channel("messaging", callId, {
       name: `${problem} Session`, created_by_id: clerkId, members: [clerkId],
     });
     await channel.create();
@@ -221,7 +241,7 @@ async function joinSession(req, res) {
     if (session.participant) return res.status(409).json({ message: "Session is full" });
     session.participant = userId;
     await session.save();
-    const channel = chatClient.channel("messaging", session.callId);
+    const channel = getChatClient().channel("messaging", session.callId);
     await channel.addMembers([clerkId]);
     res.status(200).json({ session });
   } catch (error) {
@@ -237,9 +257,9 @@ async function endSession(req, res) {
     if (!session) return res.status(404).json({ message: "Session not found" });
     if (session.host.toString() !== userId.toString()) return res.status(403).json({ message: "Only host can end session" });
     if (session.status === "completed") return res.status(400).json({ message: "Session already completed" });
-    const call = streamClient.video.call("default", session.callId);
+    const call = getStreamClient().video.call("default", session.callId);
     await call.delete({ hard: true });
-    const channel = chatClient.channel("messaging", session.callId);
+    const channel = getChatClient().channel("messaging", session.callId);
     await channel.delete();
     session.status = "completed";
     await session.save();
@@ -252,7 +272,7 @@ async function endSession(req, res) {
 
 async function getStreamToken(req, res) {
   try {
-    const token = chatClient.createToken(req.user.clerkId);
+    const token = getChatClient().createToken(req.user.clerkId);
     res.status(200).json({ token, userId: req.user.clerkId, userName: req.user.name, userImage: req.user.profileImage });
   } catch (error) {
     console.log("Error in getStreamToken:", error.message);
@@ -283,7 +303,18 @@ app.get("/api/sessions/:id", protectRoute, getSessionById);
 app.post("/api/sessions/:id/join", protectRoute, joinSession);
 app.post("/api/sessions/:id/end", protectRoute, endSession);
 app.get("/api/health", (req, res) => {
-  res.status(200).json({ msg: "api is up and running", dbConnected });
+  res.status(200).json({
+    msg: "api is up and running",
+    dbConnected,
+    env: {
+      DB_URL: !!process.env.DB_URL,
+      STREAM_API_KEY: !!process.env.STREAM_API_KEY,
+      STREAM_API_SECRET: !!process.env.STREAM_API_SECRET,
+      CLIENT_URL: process.env.CLIENT_URL || "NOT SET",
+      CLERK_SECRET_KEY: !!process.env.CLERK_SECRET_KEY,
+      CLERK_PUBLISHABLE_KEY: !!process.env.CLERK_PUBLISHABLE_KEY,
+    },
+  });
 });
 
 export default app;
