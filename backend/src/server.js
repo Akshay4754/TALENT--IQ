@@ -9,11 +9,13 @@ import { inngest, functions } from "./lib/inngest.js";
 import { clerkMiddleware } from "@clerk/express";
 import chatRoutes from "./routes/chatRoutes.js";
 import sessionRoutes from "./routes/sessionRoutes.js";
+import leetcodeProxy from "./routes/leetcodeProxy.js";
 
 const app = express();
 const __dirname = path.resolve();
-
 //middlewares
+app.use("/api/leetcode", leetcodeProxy);
+
 app.use(express.json());
 app.use(cors({ origin: ENV.CLIENT_URL, credentials: true }));
 

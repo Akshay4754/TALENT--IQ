@@ -1,12 +1,20 @@
+import { useState } from "react";
 import { Link } from "react-router";
 import Navbar from "../components/Navbar";
 
 import { PROBLEMS } from "../data/problems";
-import { ChevronRightIcon, Code2Icon } from "lucide-react";
+import { ChevronRightIcon, Code2Icon, SearchIcon } from "lucide-react";
 import { getDifficultyBadgeClass } from "../lib/utils";
 
 function ProblemsPage() {
-  const problems = Object.values(PROBLEMS);
+  const [searchQuery, setSearchQuery] = useState("");
+  const allProblems = Object.values(PROBLEMS);
+
+  const problems = allProblems.filter(
+    (p) =>
+      p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.category.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const easyProblemsCount = problems.filter((p) => p.difficulty === "Easy").length;
   const mediumProblemsCount = problems.filter((p) => p.difficulty === "Medium").length;
@@ -23,6 +31,20 @@ function ProblemsPage() {
           <p className="text-base-content/70">
             Sharpen your coding skills with these curated problems
           </p>
+        </div>
+
+        {/* SEARCH BAR */}
+        <div className="mb-6">
+          <div className="relative">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-base-content/40" />
+            <input
+              type="text"
+              placeholder="Search by title or category..."
+              className="input input-bordered w-full pl-10"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
         </div>
 
         {/* PROBLEMS LIST */}
