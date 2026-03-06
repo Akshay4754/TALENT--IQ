@@ -1,13 +1,26 @@
 import { useUser } from "@clerk/clerk-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { useEndSession, useJoinSession, useSessionById } from "../hooks/useSessions";
+import {
+  useEndSession,
+  useInviteToSession,
+  useJoinSession,
+  useSessionById,
+} from "../hooks/useSessions";
 import { PROBLEMS } from "../data/problems";
 import { executeCode } from "../lib/piston";
 import Navbar from "../components/Navbar";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { getDifficultyBadgeClass } from "../lib/utils";
-import { Loader2Icon, LogOutIcon, PhoneOffIcon } from "lucide-react";
+import {
+  Loader2Icon,
+  LogOutIcon,
+  MailIcon,
+  PhoneOffIcon,
+  ShareIcon,
+  CopyIcon,
+  CheckIcon,
+} from "lucide-react";
 import CodeEditorPanel from "../components/CodeEditorPanel";
 import OutputPanel from "../components/OutputPanel";
 
@@ -21,11 +34,15 @@ function SessionPage() {
   const { user } = useUser();
   const [output, setOutput] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const { data: sessionData, isLoading: loadingSession, refetch } = useSessionById(id);
 
   const joinSessionMutation = useJoinSession();
   const endSessionMutation = useEndSession();
+  const inviteMutation = useInviteToSession();
 
   const session = sessionData?.session;
   const isHost = session?.host?.clerkId === user?.id;
@@ -95,6 +112,25 @@ function SessionPage() {
     }
   };
 
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(`${window.location.origin}/session/${id}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSendInvite = () => {
+    if (!inviteEmail.trim()) return;
+    inviteMutation.mutate(
+      { id, email: inviteEmail.trim() },
+      {
+        onSuccess: () => {
+          setInviteEmail("");
+          setShowInviteModal(false);
+        },
+      }
+    );
+  };
+
   return (
     <div className="h-screen bg-base-100 flex flex-col">
       <Navbar />
@@ -132,6 +168,15 @@ function SessionPage() {
                           {session?.difficulty.slice(0, 1).toUpperCase() +
                             session?.difficulty.slice(1) || "Easy"}
                         </span>
+                        {session?.status === "active" && (
+                          <button
+                            onClick={() => setShowInviteModal(true)}
+                            className="btn btn-primary btn-sm gap-2"
+                          >
+                            <ShareIcon className="w-4 h-4" />
+                            Invite
+                          </button>
+                        )}
                         {isHost && session?.status === "active" && (
                           <button
                             onClick={handleEndSession}
@@ -289,6 +334,69 @@ function SessionPage() {
           </Panel>
         </PanelGroup>
       </div>
+
+      {/* INVITE MODAL */}
+      {showInviteModal && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-md">
+            <h3 className="font-bold text-xl mb-4">Share Session</h3>
+
+            {/* Copy Link */}
+            <div className="mb-6">
+              <label className="label">
+                <span className="label-text font-semibold">Session Link</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={`${window.location.origin}/session/${id}`}
+                  className="input input-bordered flex-1 text-sm"
+                />
+                <button onClick={handleCopyLink} className="btn btn-primary btn-square">
+                  {copied ? <CheckIcon className="w-5 h-5" /> : <CopyIcon className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Email Invite */}
+            <div className="mb-4">
+              <label className="label">
+                <span className="label-text font-semibold">Invite via Email</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  placeholder="Enter email address..."
+                  className="input input-bordered flex-1"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSendInvite()}
+                />
+                <button
+                  onClick={handleSendInvite}
+                  disabled={inviteMutation.isPending || !inviteEmail.trim()}
+                  className="btn btn-primary gap-2"
+                >
+                  {inviteMutation.isPending ? (
+                    <Loader2Icon className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <MailIcon className="w-4 h-4" />
+                  )}
+                  Send
+                </button>
+              </div>
+            </div>
+
+            <div className="modal-action">
+              <button className="btn btn-ghost" onClick={() => setShowInviteModal(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={() => setShowInviteModal(false)}></div>
+        </div>
+      )}
     </div>
   );
 }
