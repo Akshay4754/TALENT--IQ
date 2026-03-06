@@ -6,6 +6,7 @@ import {
   getActiveSessions,
   getMyRecentSessions,
   getSessionById,
+  inviteToSession,
   joinSession,
 } from "../controllers/sessionController.js";
 
@@ -18,5 +19,6 @@ router.get("/my-recent", protectRoute, getMyRecentSessions);
 router.get("/:id", protectRoute, getSessionById);
 router.post("/:id/join", protectRoute, joinSession);
 router.post("/:id/end", protectRoute, endSession);
+router.post("/:id/invite", protectRoute, inviteToSession);
 
 export default router;
