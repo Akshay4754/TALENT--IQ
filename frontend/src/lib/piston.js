@@ -63,24 +63,42 @@ function cppVal(type) {
   return "1";
 }
 
-// Parse example input like "m = 3, n = 7" into C++ arg values
-function parseExampleArgs(inputStr, params) {
-  return params.map((p) => {
-    const pattern = new RegExp(`\\b${p.name}\\s*=\\s*([^,\\n]+)`);
-    const match = inputStr.match(pattern);
-    if (match) {
-      let v = match[1]
-        .trim()
-        .replace(/\[/g, "{")
-        .replace(/\]/g, "}")
-        .replace(/True/g, "true")
-        .replace(/False/g, "false");
-      // Remove trailing punctuation
-      v = v.replace(/[;,]$/, "").trim();
-      return v;
+// Bracket-aware input parser: "nums = [2,7,11,15], target = 9" → { nums: "[2,7,11,15]", target: "9" }
+function parseInputValues(inputStr, paramNames) {
+  const values = {};
+  for (const name of paramNames) {
+    const regex = new RegExp(`\\b${name}\\s*=\\s*`);
+    const m = regex.exec(inputStr);
+    if (!m) continue;
+    let start = m.index + m[0].length;
+    let depth = 0;
+    let inStr = false;
+    let strCh = "";
+    let end = start;
+    for (; end < inputStr.length; end++) {
+      const ch = inputStr[end];
+      if (inStr) {
+        if (ch === strCh && inputStr[end - 1] !== "\\") inStr = false;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        inStr = true;
+        strCh = ch;
+        continue;
+      }
+      if ("[{(".includes(ch)) {
+        depth++;
+        continue;
+      }
+      if ("])}".includes(ch)) {
+        depth--;
+        continue;
+      }
+      if (ch === "," && depth === 0) break;
     }
-    return cppVal(p.type);
-  });
+    values[name] = inputStr.slice(start, end).trim();
+  }
+  return values;
 }
 
 function buildPrintStmt(returnType, fnName, args, label, expected) {
@@ -103,21 +121,43 @@ function buildCppMain(code, examples) {
 
   const { fnName, returnType, params } = parsed;
   const lines = [];
-
   const validExamples = (examples || []).filter(
     (e) => e.input && !e.input.toLowerCase().includes("see leetcode")
   );
 
   if (validExamples.length > 0) {
     validExamples.forEach((ex, i) => {
-      const args = parseExampleArgs(ex.input, params).join(", ");
+      const vals = parseInputValues(
+        ex.input,
+        params.map((p) => p.name)
+      );
       const expected = (ex.output || "").trim();
-      lines.push(buildPrintStmt(returnType, fnName, args, `Test ${i + 1}`, expected));
+      const varNames = [];
+      params.forEach((p, j) => {
+        const vn = `_a${i}_${j}`;
+        const raw = vals[p.name] || cppVal(p.type);
+        const v = raw
+          .replace(/\[/g, "{")
+          .replace(/\]/g, "}")
+          .replace(/True/g, "true")
+          .replace(/False/g, "false")
+          .replace(/[;,]$/, "")
+          .trim();
+        lines.push(`    ${p.type} ${vn} = ${v};`);
+        varNames.push(vn);
+      });
+      lines.push(
+        buildPrintStmt(returnType, fnName, varNames.join(", "), `Test ${i + 1}`, expected)
+      );
     });
   } else {
-    // No examples — use default values
-    const args = params.map((p) => cppVal(p.type)).join(", ");
-    lines.push(buildPrintStmt(returnType, fnName, args, "Test 1", "?"));
+    const varNames = [];
+    params.forEach((p, j) => {
+      const vn = `_a0_${j}`;
+      lines.push(`    ${p.type} ${vn} = ${cppVal(p.type)};`);
+      varNames.push(vn);
+    });
+    lines.push(buildPrintStmt(returnType, fnName, varNames.join(", "), "Test 1", "?"));
   }
 
   return `\nint main() {\n    Solution sol;\n${lines.join("\n")}\n    return 0;\n}`;
@@ -148,6 +188,54 @@ function prepareCpp(code, examples) {
   return result;
 }
 
+// ========== JAVA ==========
+function parseJavaSignature(code) {
+  const lines = code.split("\n");
+  for (const line of lines) {
+    const m = line.match(/^\s*(?:public\s+)?(\S+)\s+(\w+)\s*\(([^)]*)\)\s*\{?\s*$/);
+    if (m && m[2] !== "main" && m[2] !== "Solution") {
+      const returnType = m[1];
+      const fnName = m[2];
+      const params = m[3]
+        .split(",")
+        .map((p) => {
+          p = p.trim();
+          const lastSpace = p.lastIndexOf(" ");
+          if (lastSpace === -1) return null;
+          return {
+            type: p.substring(0, lastSpace).trim(),
+            name: p.substring(lastSpace + 1).trim(),
+          };
+        })
+        .filter(Boolean);
+      return { fnName, returnType, params };
+    }
+  }
+  return null;
+}
+
+function javaConvertVal(type, val) {
+  if (!val) return "null";
+  if (["int", "long", "double", "float", "boolean"].includes(type))
+    return val.replace(/True/gi, "true").replace(/False/gi, "false");
+  if (type === "String" || type === "char") return val;
+  if (type === "int[]") return `new int[]${val.replace(/\[/g, "{").replace(/\]/g, "}")}`;
+  if (type === "int[][]") return `new int[][]${val.replace(/\[/g, "{").replace(/\]/g, "}")}`;
+  if (type === "String[]") return `new String[]${val.replace(/\[/g, "{").replace(/\]/g, "}")}`;
+  if (type === "char[]") return `${val}.toCharArray()`;
+  if (type.startsWith("List<")) {
+    const inner = val.replace(/^\[/, "").replace(/\]$/, "").trim();
+    return inner ? `new ArrayList<>(Arrays.asList(${inner}))` : "new ArrayList<>()";
+  }
+  return val.replace(/\[/g, "{").replace(/\]/g, "}");
+}
+
+function javaResultWrap(returnType, expr) {
+  if (returnType.endsWith("[][]")) return `Arrays.deepToString(${expr})`;
+  if (returnType.endsWith("[]")) return `Arrays.toString(${expr})`;
+  return `"" + ${expr}`;
+}
+
 function prepareJava(code, examples) {
   let result = code;
   if (!result.includes("import java.util")) {
@@ -174,19 +262,58 @@ function prepareJava(code, examples) {
   if (result.includes("ListNode") && !result.includes("class ListNode"))
     result = result.replace("class Solution", JAVA_STRUCTS + "\nclass Solution");
   if (!result.includes("public static void main")) {
+    const parsed = parseJavaSignature(result);
     const validEx = (examples || []).filter(
       (e) => e.input && !e.input.toLowerCase().includes("see leetcode")
     );
-    const testLines =
-      validEx
-        .map(
-          (ex, i) =>
-            `        System.out.println("Test ${i + 1}: " + "expected: ${(ex.output || "").trim()}");`
-        )
-        .join("\n") || `        System.out.println("Add test cases");`;
+    let testLines;
+    if (parsed && validEx.length > 0) {
+      const parts = validEx.map((ex, i) => {
+        const vals = parseInputValues(
+          ex.input,
+          parsed.params.map((p) => p.name)
+        );
+        const expected = (ex.output || "").trim();
+        const decls = [];
+        const argNames = [];
+        parsed.params.forEach((p, j) => {
+          const raw = vals[p.name] || "null";
+          const converted = javaConvertVal(p.type, raw);
+          if (p.type.includes("[]") || p.type.startsWith("List<")) {
+            const vn = `_a${i}_${j}`;
+            decls.push(`        ${p.type} ${vn} = ${converted};`);
+            argNames.push(vn);
+          } else {
+            argNames.push(converted);
+          }
+        });
+        const call = `sol.${parsed.fnName}(${argNames.join(", ")})`;
+        const wrapped = javaResultWrap(parsed.returnType, call);
+        return [
+          ...decls,
+          `        System.out.println("Test ${i + 1}: " + ${wrapped} + " (expected: ${expected})");`,
+        ].join("\n");
+      });
+      testLines = parts.join("\n");
+    } else {
+      testLines = '        System.out.println("Add test cases");';
+    }
     result += `\nclass Main {\n    public static void main(String[] args) {\n        Solution sol = new Solution();\n${testLines}\n    }\n}`;
   }
   return result;
+}
+
+// ========== PYTHON ==========
+function parsePythonSignature(code) {
+  const m = code.match(/def\s+(\w+)\s*\(\s*self\s*(?:,\s*([^)]*))\)/);
+  if (!m) return null;
+  return {
+    fnName: m[1],
+    params: (m[2] || "")
+      .split(",")
+      .map((p) => p.trim().split(":")[0].trim())
+      .filter(Boolean),
+  };
 }
 
 function preparePython(code, examples) {
@@ -202,35 +329,69 @@ function preparePython(code, examples) {
   if (add.length) result = add.join("\n") + "\n\n" + result;
 
   if (!result.includes("if __name__") && !result.includes("print(")) {
+    const parsed = parsePythonSignature(result);
     const validEx = (examples || []).filter(
       (e) => e.input && !e.input.toLowerCase().includes("see leetcode")
     );
-    const testLines =
-      validEx
-        .map(
-          (ex, i) => `    print(f"Test ${i + 1}: {sol} (expected: ${(ex.output || "").trim()})")`
-        )
-        .join("\n") || `    print("Add test cases")`;
-    result += `\n\nif __name__ == "__main__":\n    sol = Solution()\n${testLines}`;
+    if (parsed && validEx.length > 0) {
+      const lines = validEx.map((ex, i) => {
+        const vals = parseInputValues(ex.input, parsed.params);
+        const args = parsed.params
+          .map((p) => {
+            let v = vals[p] || "None";
+            v = v
+              .replace(/\btrue\b/gi, "True")
+              .replace(/\bfalse\b/gi, "False")
+              .replace(/\bnull\b/gi, "None");
+            return v;
+          })
+          .join(", ");
+        const expected = (ex.output || "").trim();
+        return `    print(f"Test ${i + 1}: {sol.${parsed.fnName}(${args})} (expected: ${expected})")`;
+      });
+      result += `\n\nif __name__ == "__main__":\n    sol = Solution()\n${lines.join("\n")}`;
+    } else {
+      result += '\n\nif __name__ == "__main__":\n    sol = Solution()\n    print("Add test cases")';
+    }
   }
   return result;
 }
 
+// ========== JAVASCRIPT ==========
+function parseJsSignature(code) {
+  let m = code.match(/(?:var|let|const)\s+(\w+)\s*=\s*function\s*\(([^)]*)\)/);
+  if (!m) m = code.match(/function\s+(\w+)\s*\(([^)]*)\)/);
+  if (!m) return null;
+  return {
+    fnName: m[1],
+    params: m[2]
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean),
+  };
+}
+
 function prepareJs(code, examples) {
-  if (!code.includes("console.log")) {
-    const validEx = (examples || []).filter(
-      (e) => e.input && !e.input.toLowerCase().includes("see leetcode")
-    );
-    const testLines =
-      validEx
-        .map(
-          (ex, i) =>
-            `console.log("Test ${i + 1}: " + JSON.stringify(result) + " (expected: ${(ex.output || "").trim()})");`
-        )
-        .join("\n") || `console.log("Add test cases");`;
-    return code + "\n\n" + testLines;
-  }
-  return code;
+  if (code.includes("console.log")) return code;
+  const parsed = parseJsSignature(code);
+  const validEx = (examples || []).filter(
+    (e) => e.input && !e.input.toLowerCase().includes("see leetcode")
+  );
+  if (!parsed || validEx.length === 0) return code + '\n\nconsole.log("Add test cases");';
+  const { fnName, params } = parsed;
+  const lines = validEx.map((ex, i) => {
+    const vals = parseInputValues(ex.input, params);
+    const args = params
+      .map((p) => {
+        let v = vals[p] || "null";
+        v = v.replace(/True/gi, "true").replace(/False/gi, "false");
+        return v;
+      })
+      .join(", ");
+    const expected = (ex.output || "").trim();
+    return `console.log("Test ${i + 1}: " + JSON.stringify(${fnName}(${args})) + " (expected: ${expected})");`;
+  });
+  return code + "\n\n" + lines.join("\n");
 }
 
 export function prepareCode(language, code, examples = []) {

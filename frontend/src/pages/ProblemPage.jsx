@@ -54,6 +54,22 @@ function fixStarterCode(code = "", language = "") {
   return code;
 }
 
+function getSolvedProblems() {
+  try {
+    return JSON.parse(localStorage.getItem("solvedProblems") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function markProblemSolved(problemId) {
+  const solved = getSolvedProblems();
+  if (!solved.includes(problemId)) {
+    solved.push(problemId);
+    localStorage.setItem("solvedProblems", JSON.stringify(solved));
+  }
+}
+
 function ProblemPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -65,6 +81,8 @@ function ProblemPage() {
   );
   const [output, setOutput] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAccepted, setIsAccepted] = useState(false);
   const [aiReview, setAiReview] = useState(null);
   const [showReview, setShowReview] = useState(false);
 
@@ -81,6 +99,7 @@ function ProblemPage() {
       setCode(fixStarterCode(PROBLEMS[id].starterCode[selectedLanguage], selectedLanguage));
       setOutput(null);
       setLiveProblem(PROBLEMS[id]); // reset live while new one loads
+      setIsAccepted(getSolvedProblems().includes(id));
     }
   }, [id, selectedLanguage]);
 
@@ -152,6 +171,51 @@ function ProblemPage() {
     }
   };
 
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
+    setOutput(null);
+
+    const examples = (liveProblem.examples || []).filter(
+      (e) => e.input && !e.input.toLowerCase().includes("see leetcode")
+    );
+
+    if (examples.length === 0) {
+      toast.error("No test cases available for this problem.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    const result = await executeCode(selectedLanguage, code, examples);
+    setOutput(result);
+    setIsSubmitting(false);
+
+    if (!result.success) {
+      toast.error("Code execution failed!");
+      return;
+    }
+
+    const outputText = result.output || "";
+    let passCount = 0;
+    const total = examples.length;
+
+    examples.forEach((ex, i) => {
+      const line = outputText.split("\n").find((l) => l.startsWith(`Test ${i + 1}:`)) || "";
+      const actualMatch = line.match(/Test \d+:\s*(.+?)(?:\s*\(expected:|$)/);
+      const actual = actualMatch ? actualMatch[1].trim() : "";
+      const expected = (ex.output || "").trim();
+      if (actual.replace(/\s/g, "") === expected.replace(/\s/g, "")) passCount++;
+    });
+
+    if (passCount === total) {
+      markProblemSolved(currentProblemId);
+      setIsAccepted(true);
+      triggerConfetti();
+      toast.success("Accepted! All test cases passed! 🎉");
+    } else {
+      toast.error(`${passCount}/${total} test cases passed. All must pass to submit.`);
+    }
+  };
+
   return (
     <div className="h-screen bg-base-100 flex flex-col">
       <Navbar />
@@ -182,6 +246,8 @@ function ProblemPage() {
                   onRunCode={handleRunCode}
                   onAiReview={handleAiReview}
                   isReviewing={reviewMutation.isPending}
+                  onSubmit={handleSubmit}
+                  isSubmitting={isSubmitting}
                 />
               </Panel>
               <PanelResizeHandle className="h-2 bg-base-300 hover:bg-primary transition-colors cursor-row-resize" />
@@ -191,6 +257,7 @@ function ProblemPage() {
                   examples={(liveProblem.examples || []).filter(
                     (e) => e.input && !e.input.toLowerCase().includes("see leetcode")
                   )}
+                  isAccepted={isAccepted}
                 />
               </Panel>
             </PanelGroup>
