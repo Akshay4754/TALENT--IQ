@@ -1,5 +1,7 @@
 import { chatClient, streamClient } from "../lib/stream.js";
 import Session from "../models/Session.js";
+import User from "../models/User.js";
+import { sendSessionCreatedEmail, sendSessionJoinedEmail, sendInviteEmail } from "../lib/email.js";
 
 export async function createSession(req, res) {
   try {
@@ -35,6 +37,15 @@ export async function createSession(req, res) {
     await channel.create();
 
     res.status(201).json({ session });
+
+    // Send email in background (don't block response)
+    User.findById(userId).then((host) => {
+      if (host?.email) {
+        sendSessionCreatedEmail(host, session).catch((e) =>
+          console.error("Email send error (create):", e.message)
+        );
+      }
+    });
   } catch (error) {
     console.log("Error in createSession controller:", error.message);
     res.status(500).json({ message: "Internal Server Error" });
@@ -120,6 +131,18 @@ export async function joinSession(req, res) {
     await channel.addMembers([clerkId]);
 
     res.status(200).json({ session });
+
+    // Send email in background (don't block response)
+    Promise.all([
+      User.findById(session.host).select("name email"),
+      User.findById(userId).select("name email"),
+    ]).then(([host, participant]) => {
+      if (host?.email) {
+        sendSessionJoinedEmail(host, participant, session).catch((e) =>
+          console.error("Email send error (join):", e.message)
+        );
+      }
+    });
   } catch (error) {
     console.log("Error in joinSession controller:", error.message);
     res.status(500).json({ message: "Internal Server Error" });
@@ -159,6 +182,39 @@ export async function endSession(req, res) {
     res.status(200).json({ session, message: "Session ended successfully" });
   } catch (error) {
     console.log("Error in endSession controller:", error.message);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
+export async function inviteToSession(req, res) {
+  try {
+    const { id } = req.params;
+    const { email } = req.body;
+    const userId = req.user._id;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const session = await Session.findById(id);
+    if (!session) return res.status(404).json({ message: "Session not found" });
+
+    if (session.status !== "active") {
+      return res.status(400).json({ message: "Cannot invite to a completed session" });
+    }
+
+    res.status(200).json({ message: "Invitation sent successfully" });
+
+    // Send email in background (don't block response)
+    User.findById(userId)
+      .select("name email")
+      .then((inviter) => {
+        sendInviteEmail(inviter.name, email, session).catch((e) =>
+          console.error("Email send error (invite):", e.message)
+        );
+      });
+  } catch (error) {
+    console.log("Error in inviteToSession controller:", error.message);
     res.status(500).json({ message: "Internal Server Error" });
   }
 }

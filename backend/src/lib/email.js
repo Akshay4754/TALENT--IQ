@@ -3,11 +3,16 @@ import { ENV } from "./env.js";
 
 let transporter;
 
+<<<<<<< HEAD
 function createTransporter() {
   if (!ENV.EMAIL_USER || !ENV.EMAIL_PASS) {
     console.error("📧 EMAIL_USER or EMAIL_PASS is not set — emails will not be sent.");
     return null;
   }
+=======
+function getTransporter() {
+  if (transporter) return transporter;
+>>>>>>> eeed990ae4fd5094fa9bb2a58087562283c20a77
 
   transporter = nodemailer.createTransport({
     service: "gmail",
@@ -15,17 +20,21 @@ function createTransporter() {
       user: ENV.EMAIL_USER,
       pass: ENV.EMAIL_PASS,
     },
+<<<<<<< HEAD
     pool: true,
     maxConnections: 3,
     maxMessages: 100,
     socketTimeout: 30000,
     greetingTimeout: 15000,
+=======
+>>>>>>> eeed990ae4fd5094fa9bb2a58087562283c20a77
   });
 
   console.log("📧 Gmail SMTP configured for:", ENV.EMAIL_USER);
   return transporter;
 }
 
+<<<<<<< HEAD
 function getTransporter() {
   if (transporter) return transporter;
   return createTransporter();
@@ -55,6 +64,13 @@ async function sendMail(options, retries = 2) {
       }
     }
   }
+=======
+async function sendMail(options) {
+  const t = getTransporter();
+  const info = await t.sendMail(options);
+  console.log("📧 Email sent to:", options.to);
+  return info;
+>>>>>>> eeed990ae4fd5094fa9bb2a58087562283c20a77
 }
 
 export async function sendWelcomeEmail(user) {

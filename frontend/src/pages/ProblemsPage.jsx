@@ -1,12 +1,23 @@
+import { useState } from "react";
 import { Link } from "react-router";
 import Navbar from "../components/Navbar";
 
 import { PROBLEMS } from "../data/problems";
-import { ChevronRightIcon, Code2Icon } from "lucide-react";
+import { ChevronRightIcon, Code2Icon, SearchIcon } from "lucide-react";
 import { getDifficultyBadgeClass } from "../lib/utils";
 
 function ProblemsPage() {
-  const problems = Object.values(PROBLEMS);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [difficultyFilter, setDifficultyFilter] = useState("All");
+  const allProblems = Object.values(PROBLEMS);
+
+  const problems = allProblems.filter((p) => {
+    const matchesSearch =
+      p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.category.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesDifficulty = difficultyFilter === "All" || p.difficulty === difficultyFilter;
+    return matchesSearch && matchesDifficulty;
+  });
 
   const easyProblemsCount = problems.filter((p) => p.difficulty === "Easy").length;
   const mediumProblemsCount = problems.filter((p) => p.difficulty === "Medium").length;
@@ -23,6 +34,48 @@ function ProblemsPage() {
           <p className="text-base-content/70">
             Sharpen your coding skills with these curated problems
           </p>
+        </div>
+
+        {/* SEARCH BAR */}
+        <div className="mb-6">
+          <div className="relative">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 size-5 text-base-content/40" />
+            <input
+              type="text"
+              placeholder="Search by title or category..."
+              className="input input-bordered w-full pl-10"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+        </div>
+
+        {/* DIFFICULTY FILTER */}
+        <div className="mb-6 flex gap-2 flex-wrap">
+          {["All", "Easy", "Medium", "Hard"].map((level) => (
+            <button
+              key={level}
+              onClick={() => setDifficultyFilter(level)}
+              className={`btn btn-sm ${
+                difficultyFilter === level
+                  ? level === "Easy"
+                    ? "btn-success"
+                    : level === "Medium"
+                      ? "btn-warning"
+                      : level === "Hard"
+                        ? "btn-error"
+                        : "btn-primary"
+                  : "btn-ghost"
+              }`}
+            >
+              {level}
+              {level !== "All" && (
+                <span className="ml-1 opacity-70">
+                  ({allProblems.filter((p) => p.difficulty === level).length})
+                </span>
+              )}
+            </button>
+          ))}
         </div>
 
         {/* PROBLEMS LIST */}

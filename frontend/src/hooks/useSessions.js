@@ -63,3 +63,24 @@ export const useEndSession = () => {
 
   return result;
 };
+
+export const useInviteToSession = () => {
+  const result = useMutation({
+    mutationKey: ["inviteToSession"],
+    mutationFn: sessionApi.inviteToSession,
+    onSuccess: () => toast.success("Invitation sent successfully!"),
+    onError: (error) => toast.error(error.response?.data?.message || "Failed to send invitation"),
+  });
+
+  return result;
+};
+
+export const useReviewCode = () => {
+  const result = useMutation({
+    mutationKey: ["reviewCode"],
+    mutationFn: sessionApi.reviewCode,
+    onError: (error) => toast.error(error.response?.data?.message || "Failed to get AI review"),
+  });
+
+  return result;
+};
