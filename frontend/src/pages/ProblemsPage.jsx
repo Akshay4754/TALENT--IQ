@@ -8,13 +8,16 @@ import { getDifficultyBadgeClass } from "../lib/utils";
 
 function ProblemsPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [difficultyFilter, setDifficultyFilter] = useState("All");
   const allProblems = Object.values(PROBLEMS);
 
-  const problems = allProblems.filter(
-    (p) =>
+  const problems = allProblems.filter((p) => {
+    const matchesSearch =
       p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.category.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+      p.category.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesDifficulty = difficultyFilter === "All" || p.difficulty === difficultyFilter;
+    return matchesSearch && matchesDifficulty;
+  });
 
   const easyProblemsCount = problems.filter((p) => p.difficulty === "Easy").length;
   const mediumProblemsCount = problems.filter((p) => p.difficulty === "Medium").length;
@@ -45,6 +48,34 @@ function ProblemsPage() {
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
+        </div>
+
+        {/* DIFFICULTY FILTER */}
+        <div className="mb-6 flex gap-2 flex-wrap">
+          {["All", "Easy", "Medium", "Hard"].map((level) => (
+            <button
+              key={level}
+              onClick={() => setDifficultyFilter(level)}
+              className={`btn btn-sm ${
+                difficultyFilter === level
+                  ? level === "Easy"
+                    ? "btn-success"
+                    : level === "Medium"
+                      ? "btn-warning"
+                      : level === "Hard"
+                        ? "btn-error"
+                        : "btn-primary"
+                  : "btn-ghost"
+              }`}
+            >
+              {level}
+              {level !== "All" && (
+                <span className="ml-1 opacity-70">
+                  ({allProblems.filter((p) => p.difficulty === level).length})
+                </span>
+              )}
+            </button>
+          ))}
         </div>
 
         {/* PROBLEMS LIST */}

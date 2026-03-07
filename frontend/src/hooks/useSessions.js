@@ -74,3 +74,13 @@ export const useInviteToSession = () => {
 
   return result;
 };
+
+export const useReviewCode = () => {
+  const result = useMutation({
+    mutationKey: ["reviewCode"],
+    mutationFn: sessionApi.reviewCode,
+    onError: (error) => toast.error(error.response?.data?.message || "Failed to get AI review"),
+  });
+
+  return result;
+};

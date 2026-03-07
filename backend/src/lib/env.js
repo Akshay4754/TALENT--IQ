@@ -16,4 +16,6 @@ export const ENV = {
   STREAM_API_SECRET: process.env.STREAM_API_SECRET,
   EMAIL_USER: process.env.EMAIL_USER,
   EMAIL_PASS: process.env.EMAIL_PASS,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GROQ_API_KEY: process.env.GROQ_API_KEY,
 };
