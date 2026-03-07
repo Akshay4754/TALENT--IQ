@@ -18,7 +18,7 @@ function parseTestResults(output = "", examples = []) {
   });
 }
 
-export default function OutputPanel({ output, examples = [] }) {
+export default function OutputPanel({ output, examples = [], isAccepted = false }) {
   const testResults =
     output?.success && examples.length ? parseTestResults(output.output, examples) : [];
 
@@ -27,7 +27,10 @@ export default function OutputPanel({ output, examples = [] }) {
 
   return (
     <div className="h-full overflow-y-auto bg-base-100 p-4 space-y-4">
-      <h2 className="text-lg font-bold text-base-content">Output</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-base-content">Output</h2>
+        {isAccepted && <span className="badge badge-success gap-1 font-bold">✅ Accepted</span>}
+      </div>
 
       {!output && (
         <p className="text-base-content/40 text-sm">Click "Run Code" to see the output here...</p>

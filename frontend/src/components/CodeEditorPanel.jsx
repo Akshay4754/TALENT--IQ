@@ -1,5 +1,5 @@
 import Editor from "@monaco-editor/react";
-import { Loader2Icon, PlayIcon, SparklesIcon } from "lucide-react";
+import { CheckCircleIcon, Loader2Icon, PlayIcon, SparklesIcon } from "lucide-react";
 import { LANGUAGE_CONFIG } from "../data/problems";
 
 function CodeEditorPanel({
@@ -11,6 +11,8 @@ function CodeEditorPanel({
   onRunCode,
   onAiReview,
   isReviewing,
+  onSubmit,
+  isSubmitting,
 }) {
   return (
     <div className="h-full bg-base-300 flex flex-col">
@@ -45,7 +47,11 @@ function CodeEditorPanel({
               AI Review
             </button>
           )}
-          <button className="btn btn-primary btn-sm gap-2" disabled={isRunning} onClick={onRunCode}>
+          <button
+            className="btn btn-primary btn-sm gap-2"
+            disabled={isRunning || isSubmitting}
+            onClick={onRunCode}
+          >
             {isRunning ? (
               <>
                 <Loader2Icon className="size-4 animate-spin" />
@@ -58,6 +64,25 @@ function CodeEditorPanel({
               </>
             )}
           </button>
+          {onSubmit && (
+            <button
+              className="btn btn-success btn-sm gap-2"
+              disabled={isSubmitting || isRunning}
+              onClick={onSubmit}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2Icon className="size-4 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                <>
+                  <CheckCircleIcon className="size-4" />
+                  Submit
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
