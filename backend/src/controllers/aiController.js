@@ -1,4 +1,4 @@
-import { groq } from "../lib/gemini.js";
+import { getGroq } from "../lib/gemini.js";
 
 export async function reviewCode(req, res) {
   try {
@@ -43,7 +43,7 @@ Provide a structured code review in the following JSON format (respond with ONLY
   "summary": "<2-3 sentence overall summary>"
 }`;
 
-    const result = await groq.chat.completions.create({
+    const result = await getGroq().chat.completions.create({
       model: "llama-3.3-70b-versatile",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
