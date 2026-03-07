@@ -1,11 +1,22 @@
 import { Link, useLocation } from "react-router";
-import { BookOpenIcon, LayoutDashboardIcon, SparklesIcon } from "lucide-react";
+import { BookOpenIcon, LayoutDashboardIcon, SparklesIcon, SunIcon, MoonIcon } from "lucide-react";
 import { UserButton } from "@clerk/clerk-react";
+import { useState, useEffect } from "react";
+
+const DARK_THEME = "forest";
+const LIGHT_THEME = "emerald";
 
 function Navbar() {
   const location = useLocation();
+  const [isDark, setIsDark] = useState(
+    () => (localStorage.getItem("theme") || DARK_THEME) === DARK_THEME
+  );
 
-  console.log(location);
+  useEffect(() => {
+    const t = isDark ? DARK_THEME : LIGHT_THEME;
+    document.documentElement.setAttribute("data-theme", t);
+    localStorage.setItem("theme", t);
+  }, [isDark]);
 
   const isActive = (path) => location.pathname === path;
 
@@ -66,7 +77,16 @@ function Navbar() {
             </div>
           </Link>
 
-          <div className="ml-4 mt-2">
+          {/* DARK/LIGHT TOGGLE */}
+          <button
+            onClick={() => setIsDark((d) => !d)}
+            className="btn btn-ghost btn-sm btn-circle"
+            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {isDark ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
+          </button>
+
+          <div className="ml-2 mt-2">
             <UserButton />
           </div>
         </div>
