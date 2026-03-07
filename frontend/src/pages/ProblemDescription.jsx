@@ -34,8 +34,12 @@ function getExamples(html = "") {
 
   const segments = html.split(/<p>\s*<strong[^>]*>Example\s*\d*\s*<\/strong>/gi);
   for (const seg of segments.slice(1)) {
-    const inp = seg.match(/<strong[^>]*>\s*Input\s*:<\/strong>([\s\S]*?)(?=<strong[^>]*>\s*Output)/i);
-    const out = seg.match(/<strong[^>]*>\s*Output\s*:<\/strong>([\s\S]*?)(?=<strong[^>]*>|<\/ul>|$)/i);
+    const inp = seg.match(
+      /<strong[^>]*>\s*Input\s*:<\/strong>([\s\S]*?)(?=<strong[^>]*>\s*Output)/i
+    );
+    const out = seg.match(
+      /<strong[^>]*>\s*Output\s*:<\/strong>([\s\S]*?)(?=<strong[^>]*>|<\/ul>|$)/i
+    );
     const exp = seg.match(/<strong[^>]*>\s*Explanation\s*:<\/strong>([\s\S]*?)(?=<\/p>|$)/i);
     if (inp && out) {
       const ex = { input: clean(inp[1]), output: clean(out[1]) };
@@ -50,7 +54,8 @@ function getConstraints(html = "") {
   const uls = [...html.matchAll(/<ul>([\s\S]*?)<\/ul>/gi)];
   for (let i = uls.length - 1; i >= 0; i--) {
     const items = [...uls[i][1].matchAll(/<li>([\s\S]*?)<\/li>/gi)]
-      .map(m => clean(m[1])).filter(Boolean);
+      .map((m) => clean(m[1]))
+      .filter(Boolean);
     if (items.length) return items.slice(0, 6);
   }
   return [];
@@ -63,19 +68,24 @@ function getDescription(html = "", title = "") {
     .replace(/<ul>[\s\S]*?<\/ul>/gi, "")
     .replace(/<pre>[\s\S]*?<\/pre>/gi, "");
   const paras = [...stripped.matchAll(/<p>([\s\S]*?)<\/p>/gi)]
-    .map(m => clean(m[1])).filter(p => p.length > 10);
+    .map((m) => clean(m[1]))
+    .filter((p) => p.length > 10);
   if (!paras.length) return { text: title, notes: [] };
   return {
-    text : paras[0],
-    notes: paras.slice(1).filter(p => p.length > 10 && p.length < 300).slice(0, 3),
+    text: paras[0],
+    notes: paras
+      .slice(1)
+      .filter((p) => p.length > 10 && p.length < 300)
+      .slice(0, 3),
   };
 }
 
 const cache = {};
-const LANG_MAP = { javascript:"javascript", python3:"python", java:"java", cpp:"cpp" };
+const LANG_MAP = { javascript: "javascript", python3: "python", java: "java", cpp: "cpp" };
 
-function useLiveProblem(problem) {
-  const [live,    setLive]    = useState(null);
+// ✅ Now accepts onProblemLoad callback
+function useLiveProblem(problem, onProblemLoad) {
+  const [live, setLive] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const isBroken =
@@ -85,58 +95,79 @@ function useLiveProblem(problem) {
     !problem.examples?.length ||
     problem.examples[0]?.input?.toLowerCase().includes("see leetcode") ||
     problem.examples[0]?.input?.toLowerCase().includes("see problem") ||
-    problem.constraints?.some(c => c.includes("&#"));
+    problem.constraints?.some((c) => c.includes("&#"));
 
   useEffect(() => {
     if (!problem?.id) return;
-    if (!isBroken) { setLive(null); return; }
-    if (cache[problem.id]) { setLive(cache[problem.id]); return; }
+
+    // Already good data
+    if (!isBroken) {
+      setLive(null);
+      onProblemLoad?.(problem); // ✅ notify parent with good data
+      return;
+    }
+
+    // Serve from cache
+    if (cache[problem.id]) {
+      setLive(cache[problem.id]);
+      onProblemLoad?.(cache[problem.id]); // ✅ notify parent
+      return;
+    }
 
     let cancelled = false;
     setLoading(true);
 
     (async () => {
       try {
-        // Calls your backend proxy — no CORS issues
-        const res  = await fetch(`/api/leetcode/problem/${problem.id}`);
+        const res = await fetch(`/api/leetcode/problem/${problem.id}`);
         const json = await res.json();
-        const q    = json?.data?.question;
+        const q = json?.data?.question;
         if (!q?.content || cancelled) return;
 
-        const html        = q.content;
+        const html = q.content;
         const description = getDescription(html, problem.title);
-        const examples    = getExamples(html);
+        const examples = getExamples(html);
         const constraints = getConstraints(html);
-        const tags        = (q.topicTags || []).map(t => t.name);
+        const tags = (q.topicTags || []).map((t) => t.name);
 
-        const finalExamples = examples.length ? examples
+        const finalExamples = examples.length
+          ? examples
           : (q.exampleTestcaseList || []).slice(0, 2).map((tc, i) => ({
-              input : tc.replace(/\n/g, ", "),
-              output: `See Example ${i + 1} on LeetCode`,
+              input: tc.replace(/\n/g, ", "),
+              output: `See Example ${i + 1}`,
             }));
 
         const starterCode = { ...problem.starterCode };
-        for (const s of (q.codeSnippets || [])) {
+        for (const s of q.codeSnippets || []) {
           if (LANG_MAP[s.langSlug]) starterCode[LANG_MAP[s.langSlug]] = s.code;
         }
 
         const enriched = {
-          ...problem, description, constraints,
-          examples : finalExamples,
-          category : tags.slice(0, 3).join(" • ") || problem.category,
+          ...problem,
+          description,
+          constraints,
+          examples: finalExamples,
+          category: tags.slice(0, 3).join(" • ") || problem.category,
           starterCode,
         };
 
         cache[problem.id] = enriched;
-        if (!cancelled) setLive(enriched);
+
+        if (!cancelled) {
+          setLive(enriched);
+          onProblemLoad?.(enriched); // ✅ notify parent with live data
+        }
       } catch (err) {
         console.error("Problem fetch failed:", err);
+        onProblemLoad?.(problem); // fallback
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [problem?.id]);
 
   return { data: live || problem, loading };
@@ -152,17 +183,22 @@ function Skeleton() {
   );
 }
 
-function ProblemDescription({ problem, currentProblemId, onProblemChange, allProblems }) {
-  const { data: p, loading } = useLiveProblem(problem);
+// ✅ Accept onProblemLoad prop
+function ProblemDescription({
+  problem,
+  currentProblemId,
+  onProblemChange,
+  allProblems,
+  onProblemLoad,
+}) {
+  const { data: p, loading } = useLiveProblem(problem, onProblemLoad);
 
   return (
     <div className="h-full overflow-y-auto bg-base-200">
       <div className="p-6 bg-base-100 border-b border-base-300">
         <div className="flex items-start justify-between mb-3">
           <h1 className="text-3xl font-bold text-base-content">{p.title}</h1>
-          <span className={`badge ${getDifficultyBadgeClass(p.difficulty)}`}>
-            {p.difficulty}
-          </span>
+          <span className={`badge ${getDifficultyBadgeClass(p.difficulty)}`}>{p.difficulty}</span>
         </div>
         <p className="text-base-content/60">{p.category}</p>
         {loading && (
@@ -189,11 +225,15 @@ function ProblemDescription({ problem, currentProblemId, onProblemChange, allPro
       <div className="p-6 space-y-6">
         <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
           <h2 className="text-xl font-bold text-base-content mb-3">Description</h2>
-          {loading ? <Skeleton /> : (
+          {loading ? (
+            <Skeleton />
+          ) : (
             <div className="space-y-3 text-base leading-relaxed">
               <p className="text-base-content/90">{p.description?.text}</p>
               {(p.description?.notes || []).map((note, idx) => (
-                <p key={idx} className="text-base-content/90">{note}</p>
+                <p key={idx} className="text-base-content/90">
+                  {note}
+                </p>
               ))}
             </div>
           )}
@@ -201,7 +241,9 @@ function ProblemDescription({ problem, currentProblemId, onProblemChange, allPro
 
         <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
           <h2 className="text-xl font-bold mb-4 text-base-content">Examples</h2>
-          {loading ? <Skeleton /> : (
+          {loading ? (
+            <Skeleton />
+          ) : (
             <div className="space-y-4">
               {(p.examples || []).map((example, idx) => (
                 <div key={idx}>
@@ -234,7 +276,9 @@ function ProblemDescription({ problem, currentProblemId, onProblemChange, allPro
 
         <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
           <h2 className="text-xl font-bold mb-4 text-base-content">Constraints</h2>
-          {loading ? <Skeleton /> : (
+          {loading ? (
+            <Skeleton />
+          ) : (
             <ul className="space-y-2 text-base-content/90">
               {(p.constraints || []).map((constraint, idx) => (
                 <li key={idx} className="flex gap-2">
