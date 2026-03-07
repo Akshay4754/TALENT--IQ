@@ -9,6 +9,14 @@ A full-stack real-time coding interview platform with live video calls, collabor
 
 ---
 
+## Platform Preview
+
+<p align="center">
+  <img src="homepage.png" alt="Talent-IQ Homepage" width="900"/>
+</p>
+
+---
+
 ## 🌟 Features
 
 - 🧑‍💻 VSCode-powered online code editor (Monaco)
