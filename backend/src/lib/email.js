@@ -1,58 +1,50 @@
 import nodemailer from "nodemailer";
 import { ENV } from "./env.js";
 
-let transporter;
-
+// Create a fresh transporter each time — avoids stale/dead pooled connections with Gmail
 function createTransporter() {
   if (!ENV.EMAIL_USER || !ENV.EMAIL_PASS) {
     console.error("📧 EMAIL_USER or EMAIL_PASS is not set — emails will not be sent.");
     return null;
   }
 
-  transporter = nodemailer.createTransport({
-    service: "gmail",
+  return nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
     auth: {
       user: ENV.EMAIL_USER,
       pass: ENV.EMAIL_PASS,
     },
-    pool: true,
-    maxConnections: 3,
-    maxMessages: 100,
-    socketTimeout: 30000,
-    greetingTimeout: 15000,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
-
-  console.log("📧 Gmail SMTP configured for:", ENV.EMAIL_USER);
-  return transporter;
 }
 
-function getTransporter() {
-  if (transporter) return transporter;
-  return createTransporter();
-}
+async function sendMail(options) {
+  const maxRetries = 2;
 
-async function sendMail(options, retries = 2) {
-  const t = getTransporter();
-  if (!t) {
-    throw new Error("Email transporter is not configured (missing EMAIL_USER or EMAIL_PASS)");
-  }
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const t = createTransporter(); // fresh transporter every attempt
+    if (!t) {
+      throw new Error("Email transporter not configured (missing EMAIL_USER or EMAIL_PASS)");
+    }
 
-  for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const info = await t.sendMail(options);
-      console.log("📧 Email sent to:", options.to);
+      console.log(`📧 Email sent to ${options.to} (messageId: ${info.messageId})`);
       return info;
     } catch (error) {
-      console.error(`📧 Email attempt ${attempt}/${retries} failed:`, error.message);
-      if (attempt < retries) {
-        // Recreate transporter in case the connection went stale
-        transporter = null;
-        createTransporter();
-        // Brief delay before retry
-        await new Promise((r) => setTimeout(r, 1000));
-      } else {
+      console.error(
+        `📧 Attempt ${attempt}/${maxRetries} failed for ${options.to}:`,
+        error.code || error.message
+      );
+      if (attempt === maxRetries) {
         throw error;
       }
+      // Brief delay before retry
+      await new Promise((r) => setTimeout(r, 2000));
     }
   }
 }
