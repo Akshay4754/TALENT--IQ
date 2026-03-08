@@ -1,0 +1,672 @@
+# 🎯 TALENT-IQ — Complete Interview Q&A
+
+> Covers every part of the project: architecture, backend, frontend, real-time, AI, code execution, auth, email, deployment, and design decisions.
+
+---
+
+## 📐 Section 1: Project Overview & Architecture
+
+### Q1. What is TALENT-IQ and what problem does it solve?
+**A:** TALENT-IQ is a **real-time collaborative coding interview platform**. It solves the problem of conducting technical interviews remotely by combining:
+- A shared code editor (both users type simultaneously and see each other's changes)
+- A live video call + text chat in the same window
+- A curated set of LeetCode-style problems
+- AI-powered code review after submission
+- Email notifications for session events
+
+### Q2. What is the overall architecture of the project?
+**A:** The project is a **full-stack monorepo** with three distinct layers:
+
+| Layer | Tech | Purpose |
+|---|---|---|
+| **Frontend** | React + Vite | SPA served at `/`, handles UI, routing, real-time collab |
+| **Backend** | Node.js + Express | REST API, auth middleware, DB operations, external SDKs |
+| **Database** | MongoDB (Mongoose) | Persists Sessions and Users |
+
+External services integrated:
+- **Clerk** → Authentication
+- **Stream** → Video calls + chat messaging
+- **Yjs + y-webrtc** → Real-time collaborative code editing (P2P)
+- **Groq (LLaMA 3.3 70B)** → AI code review
+- **Judge0** → Remote code execution
+- **Inngest** → Background event-driven functions (webhooks)
+- **Nodemailer + Gmail SMTP** → Transactional email
+
+### Q3. How is the project deployed?
+**A:**
+- **Frontend** is built with Vite and the dist is served statically by the Express backend in **production** (`express.static` pointing to `../frontend/dist`).
+- A [vercel.json](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/vercel.json) exists at both root and frontend level, indicating Vercel is also used as a possible deployment target.
+- In development, the frontend Vite dev server and the backend Express server run separately.
+
+---
+
+## 🗄️ Section 2: MongoDB & Mongoose (Database)
+
+### Q4. What Mongoose models exist and what do they represent?
+**A:** Two models:
+
+**User** ([models/User.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/models/User.js)):
+```js
+{ clerkId, email, name, profileImage, timestamps }
+```
+- `clerkId` is the primary lookup key (from Clerk auth)
+- Not the same as MongoDB `_id`
+
+**Session** ([models/Session.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/models/Session.js)):
+```js
+{ problem, difficulty, host (ref: User), participant (ref: User), callId, status, timestamps }
+```
+- `callId` is unique, used by Stream for video/chat room ID
+- `status` enum: `"active" | "completed" | "cancelled"`
+- `host` and `participant` are ObjectId references to [User](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/DashboardPage.jsx#44-49)
+
+### Q5. Why is `callId` unique and how is it generated?
+**A:** Each session needs a distinct room in both Stream Video and Stream Chat. The `callId` is generated as:
+```js
+`session_${Date.now()}_${Math.random().toString(36).substring(7)}`
+```
+`Date.now()` ensures rough monotonicity; the random suffix avoids collisions if two sessions are created in the same millisecond. It is stored as a `unique: true` field to enforce DB-level uniqueness.
+
+### Q6. What does `populate()` do and where is it used?
+**A:** Mongoose's `.populate()` replaces an ObjectId reference with the actual referenced document. In [getActiveSessions](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/controllers/sessionController.js#55-69):
+```js
+Session.find({ status: "active" })
+  .populate("host", "name profileImage email clerkId")
+  .populate("participant", "name profileImage email clerkId")
+```
+The second argument `"name profileImage email clerkId"` is a **projection** — it selects only those fields from the joined User document, keeping the response lean.
+
+### Q7. What is [connectDB](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/db.js#3-15) and why does it re-throw errors instead of calling `process.exit`?
+**A:** [connectDB](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/db.js#3-15) in [lib/db.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/db.js) connects Mongoose to MongoDB. It **re-throws** instead of calling `process.exit(1)` because in a **serverless** environment (like Vercel), `process.exit` would crash the entire function runtime. Re-throwing lets the caller ([startServer](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/server.js#43-51)) handle the error gracefully.
+
+---
+
+## 🔐 Section 3: Authentication (Clerk)
+
+### Q8. How does authentication work in this project?
+**A:** The project uses **Clerk** for authentication — a third-party auth-as-a-service.
+
+Flow:
+1. User signs up/logs in via Clerk's hosted UI (React components).
+2. Clerk issues a **JWT session token**.
+3. Every API request from the frontend includes this token in the `Authorization` header automatically.
+4. On the backend, `clerkMiddleware()` (from `@clerk/express`) is registered globally — it validates the JWT and attaches auth info to `req.auth`.
+5. The custom `protectRoute` middleware then calls `req.auth().userId` to get the `clerkId`, looks up the MongoDB [User](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/DashboardPage.jsx#44-49), and attaches it to `req.user`.
+
+### Q9. What is `protectRoute` and how does it work?
+**A:** `protectRoute` is an **array of two middlewares**:
+1. `requireAuth()` — from Clerk, rejects requests with no valid JWT (401)
+2. A custom async middleware that:
+   - Reads `clerkId` from `req.auth().userId`
+   - Looks up user in MongoDB by `clerkId`
+   - **Auto-creates** the user if not found (fallback in case Inngest webhook hasn't fired yet)
+   - Attaches `req.user` (MongoDB User doc) to the request
+
+By exporting it as an array, Express applies both middlewares in sequence when used like:
+```js
+router.post("/", protectRoute, createSession)
+```
+
+### Q10. Why do we store both `clerkId` and MongoDB `_id` for users?
+**A:**
+- **MongoDB `_id`** is used inside the DB for references (e.g., `host`, `participant` in Session model) — it's efficient for Mongoose's `$or` queries and `populate`.
+- **`clerkId`** is used for Clerk and Stream authentication, since those external services identify users by the Clerk-issued ID, not a MongoDB ObjectId.
+
+The `protectRoute` middleware bridges the two: it maps `clerkId → _id` and attaches the full User object to `req.user`.
+
+### Q11. What is the Inngest `sync-user` function and why is it needed?
+**A:** When a user registers on Clerk, Clerk fires a **webhook event** `clerk/user.created`. Inngest receives this event and runs the `syncUser` function which:
+1. Creates the user in MongoDB
+2. Upserts the user into Stream (so they can use video/chat)
+3. Sends a welcome email
+
+This is an **event-driven, async pattern** that decouples user creation from the HTTP request cycle. The `protectRoute` fallback (auto-create) is a safety net in case this webhook hasn't fired yet when the user first makes an API request.
+
+---
+
+## 🎥 Section 4: Stream (Video & Chat)
+
+### Q12. How is Stream integrated for video calls?
+**A:** Two separate Stream SDKs are used:
+
+| SDK | Used for |
+|---|---|
+| `stream-chat` (StreamChat) | Messaging/chat channels |
+| `@stream-io/node-sdk` (StreamClient) | Video calls |
+
+When a session is created:
+1. A Stream **video call** is created with `streamClient.video.call("default", callId).getOrCreate(...)`
+2. A Stream **chat channel** is created with `chatClient.channel("messaging", callId, {...}).create()`
+
+When joining, the participant's clerkId is added as a member to the channel:
+```js
+channel.addMembers([clerkId])
+```
+
+When ending, both are deleted:
+```js
+call.delete({ hard: true })
+channel.delete()
+```
+
+### Q13. How does the frontend connect to Stream for video?
+**A:** The [useStreamClient](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useStreamClient.js#7-90) hook manages it:
+1. Calls the backend `/api/chat/stream-token` to get a **user-scoped Stream token**
+2. Initializes a `StreamVideoClient` with user info + token
+3. Joins the video call: `call.join({ create: true })`
+4. Connects a `StreamChat` client for chat messaging
+5. Watches the chat channel: `chatChannel.watch()`
+
+The `<StreamVideo>` and `<StreamCall>` providers from `@stream-io/video-react-sdk` wrap the `VideoCallUI` component to provide Stream context.
+
+### Q14. How is the Stream token generated on the backend?
+**A:** In [chatController.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/controllers/chatController.js):
+```js
+const token = chatClient.createToken(req.user.clerkId)
+```
+This is a **server-generated token** — Stream's secret key is only on the backend. The client cannot generate its own token. The token is user-scoped and ties the Stream session to `clerkId`.
+
+---
+
+## 🔄 Section 5: Real-Time Collaborative Editing (Yjs)
+
+### Q15. What is Yjs and why is it used for collaborative editing?
+**A:** **Yjs** is a conflict-free replicated data type (CRDT) library for building collaborative applications. It ensures that when two users type simultaneously, their edits are merged without conflicts. It's analogous to how Google Docs handles simultaneous edits.
+
+The [useYjsCollaboration](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useYjsCollaboration.js#18-122) hook:
+- Creates a `Y.Doc` (shared document)
+- Creates a `WebrtcProvider` using the session's `callId` as the room name
+- Connects to public signaling servers (`wss://signaling.yjs.dev`, etc.)
+- Uses `Y.Text("monacoContent")` as the shared text container
+
+### Q16. How does [useYjsCollaboration](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useYjsCollaboration.js#18-122) work step by step?
+**A:**
+1. When `roomId` is provided (session `callId`), a `Y.Doc` is created
+2. A `WebrtcProvider` is set up — this uses WebRTC (peer-to-peer) to sync the Yjs document between participants
+3. **Awareness** is set with the user's name and a random color — this powers cursor presence
+4. Event listeners track `synced` (initial sync) and `peers` (connection state) and `change` (awareness updates for peer count)
+5. `setSharedCode` and `getSharedCode` are stable callbacks (using `useCallback`) that transact on `Y.Text`
+6. On unmount, the provider and doc are destroyed to clean up WebRTC connections
+
+### Q17. What is `ydoc.transact()` and why is it used?
+**A:** `ydoc.transact()` batches multiple Yjs operations into a **single atomic transaction**. In `setSharedCode`:
+```js
+ydoc.transact(() => {
+  ytext.delete(0, ytext.length)
+  if (newCode) ytext.insert(0, newCode)
+})
+```
+Without `transact`, deleting then inserting would send two separate sync messages to peers, potentially causing a momentarily empty editor state. With `transact`, it's one atomic operation.
+
+### Q18. How is the Yjs document seeded with starter code?
+**A:** In [SessionPage](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/SessionPage.jsx#78-699):
+- A `seededRef` (useRef) flag prevents re-seeding
+- `useEffect` watches `yjsReady, ydoc, problemData`
+- Only if the `Y.Text("monacoContent")` is empty (`.length === 0`) does it call `setSharedCode(starterCode)`
+- This ensures only the **first user to load** seeds the document — the second user gets the already-seeded content via Yjs sync
+
+### Q19. What is the difference between `useRef` and `useState` in the Yjs hook?
+**A:** `useRef` (`ydocRef`, `providerRef`) is used for the Yjs doc and provider because:
+- They are **mutable objects** that must persist across re-renders
+- Updating them should **not trigger re-renders** (they are internal implementation details)
+- `useState` is used for `connected`, `peers`, `ready` because those **must** trigger re-renders when changed (they are displayed in the UI)
+
+---
+
+## 🤖 Section 6: AI Code Review (Groq / LLaMA)
+
+### Q20. How does AI code review work?
+**A:** The [reviewCode](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/controllers/aiController.js#3-67) controller:
+1. Receives `{ code, language, problem, difficulty }` from the client
+2. Builds a detailed prompt instructing the LLaMA model to act as a coding interviewer
+3. Calls [getGroq().chat.completions.create()](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/gemini.js#6-13) with `model: "llama-3.3-70b-versatile"`, `temperature: 0.3`, and `response_format: { type: "json_object" }` to get structured JSON directly
+4. Parses the JSON and returns it as the response
+
+### Q21. Why is `temperature: 0.3` used?
+**A:** `temperature` controls randomness. `0.3` is a low value that makes the model's output **more deterministic and factual** — appropriate for code analysis. High temperature (e.g., 0.9) would make responses more creative but less reliable for structured code review.
+
+### Q22. What is the [getGroq()](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/gemini.js#6-13) singleton pattern and why?
+**A:** The [getGroq](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/gemini.js#6-13) function in [lib/gemini.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/gemini.js) (note: confusingly named "gemini" but uses Groq) is a **lazy singleton**:
+```js
+let _groq
+export function getGroq() {
+  if (!_groq) _groq = new Groq({ apiKey: ENV.GROQ_API_KEY })
+  return _groq
+}
+```
+This avoids creating a new SDK client on every API call — the client is created once and reused. The lazy initialization also means it only throws if `GROQ_API_KEY` is missing when first actually used.
+
+### Q23. What does the AI review response look like?
+**A:** A structured JSON object:
+```json
+{
+  "overallScore": 7,
+  "timeComplexity": "O(n) — linear scan",
+  "spaceComplexity": "O(1)",
+  "correctness": { "score": 8, "notes": "..." },
+  "edgeCases": ["Empty array", "Single element"],
+  "strengths": ["Clean variable names"],
+  "improvements": ["Consider edge case for null input"],
+  "optimizedApproach": "Use two-pointer technique",
+  "summary": "..."
+}
+```
+
+---
+
+## ⚙️ Section 7: Code Execution (Judge0)
+
+### Q24. How does code execution work? What are the two paths?
+**A:** There are **two separate execution paths**:
+
+**Backend ([codeController.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/controllers/codeController.js))** — used for a "run" endpoint:
+1. Submits code to Judge0 API (async mode — no `wait=true`)
+2. Gets a `token` back
+3. **Polls** every 1.5 seconds, up to 15 attempts, until status ID > 2 (no longer processing)
+4. Returns decoded stdout/stderr
+
+**Frontend ([lib/piston.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/lib/piston.js))** — used for the interactive "Run" button in SessionPage:
+1. First **prepares the code** (adds test case harnesses via [prepareCode](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/lib/piston.js#397-412))
+2. Calls Judge0 with `wait=true` (synchronous mode — blocks until done)
+3. Decodes base64 output and returns it
+
+### Q25. What does [prepareCode](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/lib/piston.js#397-412) do and why is it needed?
+**A:** LeetCode-style problems have functions that need a `main()` or equivalent to call them with test inputs. [prepareCode](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/lib/piston.js#397-412) automatically **wraps the user's solution function** with test runners:
+
+- **Python**: Adds `if __name__ == "__main__":` block with `sol.methodName(args)` calls
+- **JavaScript**: Appends `console.log()` statements
+- **Java**: Appends a [Main](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/lib/piston.js#118-165) class with `public static void main`
+- **C++**: Removes any existing `main()` and inserts a new one with `Solution sol;` and test calls
+
+It also adds imports/headers automatically (e.g., `#include <bits/stdc++.h>` for C++, `import java.util.*` for Java).
+
+### Q26. How does the test case comparison work?
+**A:** In `SessionPage.handleRunCode`:
+```js
+const line = outputText.split("\n").find(l => l.startsWith(`Test ${i + 1}:`))
+const actual = line.match(/Test \d+:\s*(.+?)(?:\s*\(expected:|$)/)[1].trim()
+const expected = (ex.output || "").trim()
+return actual.replace(/\s/g, "") === expected.replace(/\s/g, "")
+```
+The prepared code outputs `"Test 1: [result] (expected: [expected])"`. The regex extracts the actual result, and whitespace is stripped before comparison to handle formatting differences.
+
+### Q27. What are Judge0 status IDs?
+**A:**
+| ID | Meaning |
+|---|---|
+| 1 | In Queue |
+| 2 | Processing |
+| 3 | Accepted (success) |
+| 6 | Compilation Error |
+| > 3 | Various error states (TLE, RE, WA, etc.) |
+
+---
+
+## 📧 Section 8: Email System (Nodemailer)
+
+### Q28. What emails does the system send and when?
+**A:**
+| Event | Email | Recipient |
+|---|---|---|
+| User registers | Welcome email | New user |
+| Session created | Session created confirmation | Host |
+| Participant joins | Someone joined notification | Host |
+| Invite sent | Invitation to join | Invitee email |
+
+### Q29. Why is a fresh transporter created on each email send?
+**A:** Gmail's SMTP connections can become **stale or dead** in long-running or serverless environments. By calling [createTransporter()](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/email.js#4-24) on every attempt, we always get a fresh connection, avoiding `ECONNRESET` or authentication failure errors. The trade-off is slightly more latency per email, which is acceptable for transactional emails.
+
+### Q30. How are emails sent without blocking the HTTP response?
+**A:** Email sending is done **fire-and-forget** after the HTTP response is sent:
+```js
+res.status(201).json({ session })  // ← Response sent immediately
+
+// Then, email fires async after response
+User.findById(userId).then((host) => {
+  if (host?.email) sendSessionCreatedEmail(host, session).catch(...)
+})
+```
+This pattern prevents email latency (network I/O) from slowing down the user-facing API response.
+
+### Q31. What is the retry logic in [sendMail](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/email.js#25-51)?
+**A:** [sendMail](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/lib/email.js#25-51) retries up to 2 times (`maxRetries = 2`). If the first send fails, it waits 2 seconds and tries again with a brand-new transporter. This handles transient SMTP failures. After max retries, it throws the error.
+
+---
+
+## ⚛️ Section 9: Frontend Architecture
+
+### Q32. How is routing handled and how is auth guarding done?
+**A:** React Router v6 (`Routes` / `Route`) is used. Route guards are inline:
+```jsx
+<Route path="/dashboard" element={isSignedIn ? <DashboardPage /> : <Navigate to="/" />} />
+```
+`useUser()` from `@clerk/clerk-react` gives `{ isSignedIn, isLoaded }`. The `!isLoaded` early return prevents a flicker where the page briefly redirects before Clerk finishes loading.
+
+### Q33. How does TanStack Query (React Query) work in this project?
+**A:** TanStack Query manages all server state. Two patterns used:
+
+**`useQuery`** for read operations:
+```js
+useSessionById(id)  // polls every 5 seconds via refetchInterval: 5000
+useActiveSessions() // fetches and caches active sessions
+```
+
+**`useMutation`** for write operations:
+```js
+useCreateSession()   // POST /api/sessions
+useJoinSession()     // POST /api/sessions/:id/join
+useEndSession()      // POST /api/sessions/:id/end
+```
+Each mutation has [onSuccess](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useSessions.js#9-10)/[onError](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useSessions.js#50-51) handlers showing `toast` notifications.
+
+### Q34. Why does [useSessionById](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useSessions.js#34-44) use `refetchInterval: 5000`?
+**A:** To detect when the host ends the session. The participant's client polls every 5 seconds. When the session `status` changes to `"completed"`, the `useEffect` in [SessionPage](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/SessionPage.jsx#78-699) that watches `session.status` fires and navigates to `/dashboard`. This is a **polling-based real-time update** strategy (simpler than WebSockets for this use case).
+
+### Q35. What UI library and styling approach is used?
+**A:** The project uses:
+- **DaisyUI** (Tailwind CSS component library) — `className="btn btn-primary"`, `badge`, `modal`, etc.
+- **Tailwind CSS** utility classes directly on elements
+- **Lucide React** for icons (`LogOutIcon`, `SparklesIcon`, etc.)
+- **react-hot-toast** for non-intrusive notification toasts
+- **canvas-confetti** for the confetti animation when all tests pass
+
+### Q36. What is `react-resizable-panels` and how is it used in SessionPage?
+**A:** `react-resizable-panels` provides draggable panel splitters. In [SessionPage](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/SessionPage.jsx#78-699), there is a **nested panel layout**:
+```
+PanelGroup (horizontal)
+├── Panel (left — 50%)
+│   └── PanelGroup (vertical)
+│       ├── Panel (problem description — 50%)
+│       └── PanelGroup (vertical)
+│           ├── Panel (code editor — 70%)
+│           └── Panel (output — 30%)
+└── Panel (right — 50%) ← video call + chat
+```
+Users can drag the `PanelResizeHandle` bars to resize panels.
+
+---
+
+## 🔗 Section 10: Hooks Deep Dive
+
+### Q37. Explain the [useStreamClient](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useStreamClient.js#7-90) hook completely.
+**A:** This hook initializes VIDEO + CHAT for a session participant. States managed:
+- `streamClient` — the video client instance
+- `call` — the specific call object
+- `chatClient` — the chat client instance
+- `channel` — the specific chat channel
+- `isInitializingCall` — loading state
+
+**Init flow** (only if `isHost || isParticipant`):
+1. Calls backend for Stream token
+2. Initializes `StreamVideoClient` with `initializeStreamClient`
+3. Joins the video call (`call.join({ create: true })`)
+4. Creates `StreamChat` instance and connects user
+5. Watches the chat channel
+
+**Cleanup** (on unmount):
+- Leaves the call, disconnects the chat user, disconnects the video client
+- Uses an **IIFE** ([(async () => { ... })()](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/App.jsx#11-32)) inside the cleanup function because cleanup functions can't be async directly
+
+### Q38. What is [fixStarterCode](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/SessionPage.jsx#36-77) in SessionPage and why is it needed?
+**A:** Many LeetCode-style problems have starter code that lacks necessary imports (e.g., a Java solution using `ArrayList` without `import java.util.*`). [fixStarterCode](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/SessionPage.jsx#36-77) is a lightweight version of [prepareCode](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/lib/piston.js#397-412) that adds missing boilerplate to make the code displayable in the editor without errors. For example:
+- C++: adds `#include <bits/stdc++.h>` if missing
+- Java: adds `import java.util.*` if data structure keywords are found
+- Python: adds `from collections import ...` if needed
+
+---
+
+## 🏗️ Section 11: Backend Architecture
+
+### Q39. What is the Express server setup and what middleware is global?
+**A:** Three global middlewares are applied to all routes, in this order:
+1. `express.json()` — parses JSON request bodies
+2. `cors({ origin: ENV.CLIENT_URL, credentials: true })` — allows cross-origin requests from the frontend (with cookies/credentials)
+3. `clerkMiddleware()` — validates Clerk JWTs on every request (doesn't reject, just populates `req.auth`)
+
+### Q40. What routes exist and what do they do?
+**A:**
+| Route prefix | File | Purpose |
+|---|---|---|
+| `/api/leetcode` | [leetcodeProxy.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/routes/leetcodeProxy.js) | Proxies requests to LeetCode API |
+| `/api/inngest` | Inngest serve | Receives Clerk webhook events |
+| `/api/chat` | [chatRoutes.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/routes/chatRoutes.js) | Stream token generation |
+| `/api/sessions` | [sessionRoutes.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/routes/sessionRoutes.js) | Full CRUD for sessions |
+| `/api/ai` | [aiRoutes.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/routes/aiRoutes.js) | AI code review endpoint |
+| `/api/code` | [codeRoutes.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/routes/codeRoutes.js) | Server-side code execution |
+
+### Q41. Why is Inngest used instead of directly handling webhooks in Express?
+**A:** Inngest provides:
+1. **Automatic retries** — if a webhook fails, Inngest retries it automatically
+2. **Type-safe event matching** — `{ event: "clerk/user.created" }` pattern matching
+3. **Durable execution** — functions can be long-running without timeout issues
+4. **Dashboard** — for debugging and replaying events
+5. **Decoupling** — the `sync-user` function doesn't block the registration HTTP flow
+
+---
+
+## 🎭 Section 12: Session Lifecycle
+
+### Q42. Walk through the entire lifecycle of a session from creation to deletion.
+**A:**
+
+**1. Host creates session** (`POST /api/sessions`):
+- `Session.create()` in MongoDB
+- `streamClient.video.call(...).getOrCreate()` — create video call
+- `chatClient.channel(...).create()` — create chat channel
+- Email sent to host (non-blocking)
+
+**2. Participant joins** — two ways:
+- Clicks link → navigated to `/session/:id` → `auto-join` fires via `useEffect` → `POST /api/sessions/:id/join`
+- [joinSession](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/controllers/sessionController.js#106-151) controller sets `session.participant = userId`, adds them to Stream chat channel
+- Email sent to host (non-blocking)
+
+**3. Both users in session**:
+- Yjs over WebRTC syncs the code editor
+- Stream video call for video/audio
+- Stream chat channel for text messages
+- [useSessionById](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useSessions.js#34-44) polls every 5s for session state
+
+**4. Host ends session** (`POST /api/sessions/:id/end`):
+- Only host can call this
+- Stream video call deleted (`hard: true`)
+- Stream chat channel deleted
+- `session.status = "completed"` saved
+- Host navigated to `/dashboard`
+- Participant's polling detects `status === "completed"` and also navigates to `/dashboard`
+
+---
+
+## 💡 Section 13: Design Decisions & Trade-offs
+
+### Q43. Why was Clerk chosen over custom authentication?
+**A:** Custom auth requires implementing password hashing, JWT generation, refresh token rotation, security hardening, etc. Clerk handles all of this plus additional features like:
+- Social login (Google, GitHub)
+- Multi-factor authentication
+- Email verification
+- Session management
+The trade-off is **vendor lock-in** and monthly cost.
+
+### Q44. Why use WebRTC (y-webrtc) for Yjs instead of WebSockets?
+**A:** For **two-user sessions**, WebRTC (peer-to-peer) is ideal:
+- **No server cost** — data flows directly between peers
+- **Low latency** — direct P2P connection avoids server round-trips
+- The downside is that it requires signaling servers (used here: `wss://signaling.yjs.dev`) to establish the connection
+
+If the platform needed rooms with many users, a WebSocket-based Yjs provider (like `y-websocket`) would be more appropriate.
+
+### Q45. Why is the session limited to 2 participants (host + 1)?
+**A:**
+- The [Session](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/controllers/sessionController.js#152-188) model has one `host` field and one `participant` field
+- [joinSession](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/controllers/sessionController.js#106-151) checks `if (session.participant) return 409`
+- This is intentional for a **1-on-1 interview** scenario
+- Supports the video call use case better (group calls would need more complex logic)
+
+### Q46. What happens if the Inngest webhook doesn't fire in time?
+**A:** The `protectRoute` middleware has a **fallback auto-create** mechanism:
+```js
+let user = await User.findOne({ clerkId })
+if (!user) {
+  // fetch from Clerk API, create in MongoDB, sync to Stream
+}
+```
+This ensures the user can always access the API even if the Inngest webhook is delayed or fails.
+
+### Q47. How is CORS configured and why?
+**A:**
+```js
+cors({ origin: ENV.CLIENT_URL, credentials: true })
+```
+- `origin: ENV.CLIENT_URL` — only allows requests from the frontend domain (e.g., `http://localhost:5173` in dev)
+- `credentials: true` — required for cookies (Clerk uses cookies for session persistence)
+- Not using `origin: "*"` because that would block credentials
+
+### Q48. Why does [useSessionById](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useSessions.js#34-44) have `refetchInterval: 5000` rather than using WebSockets?
+**A:** Implementing WebSocket-based real-time session state updates would require:
+1. A WebSocket server on the backend
+2. Event emissions when session status changes
+3. Connection management on the frontend
+
+Polling every 5 seconds is simpler, sufficient for the use case (session end detection), and avoids maintaining WebSocket connections. The trade-off is up to 5 seconds of delay before the participant is redirected.
+
+---
+
+## 🧪 Section 14: Testing, Edge Cases & Error Handling
+
+### Q49. What edge cases are handled in [joinSession](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/backend/src/controllers/sessionController.js#106-151)?
+**A:** Four edge cases:
+1. Session not found → 404
+2. Session already completed → 400 (`"Cannot join a completed session"`)
+3. Host trying to join own session → 400 (`"Host cannot join their own session as participant"`)
+4. Session already has a participant → 409 (`"Session is full"`)
+
+### Q50. How are API errors surfaced to the user?
+**A:** All mutations in [useSessions.js](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useSessions.js) have [onError](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/hooks/useSessions.js#50-51) handlers:
+```js
+onError: (error) => toast.error(error.response?.data?.message || "Failed to join session")
+```
+Axios wraps the response, and the backend always returns `{ message: "..." }` in error responses. The optional chaining `?.response?.data?.message` gracefully falls back to a generic message if the error doesn't have a known structure.
+
+### Q51. What happens if Judge0 execution times out?
+**A:** In the backend `codeController`:
+```js
+const result = await pollResult(token)  // polls up to 15 times, 1.5s apart = 22.5s max
+if (!result) return res.json({ success: false, error: "Execution timed out. Try again." })
+```
+The frontend shows the error in the output panel.
+
+### Q52. What error handling exists for the AI review endpoint?
+**A:**
+```js
+if (error.message?.includes("429") || error.message?.includes("quota")) {
+  return res.status(429).json({ message: "AI service is busy. Please wait a moment and try again." })
+}
+```
+This specifically handles **Groq API rate limiting** (HTTP 429) and gives a user-friendly message. Other errors return 500.
+
+---
+
+## 🚀 Section 15: Advanced/Tricky Questions
+
+### Q53. What is the `seededRef` pattern and why is `useRef` used instead of `useState`?
+**A:** `seededRef` is a mutable ref initialized to `false`. After seeding, it's set to `true`:
+```js
+const seededRef = useRef(false)
+useEffect(() => {
+  if (!yjsReady || !ydoc || seededRef.current) return
+  // ... seed code
+  seededRef.current = true  // mutate ref — does NOT trigger re-render
+}, [yjsReady, ydoc, problemData, selectedLanguage, setSharedCode])
+```
+`useState` would trigger a re-render when set to `true`, which would re-run the effect and potentially double-seed. `useRef` mutates without re-rendering, making it the correct choice for a **flag that must persist across renders but shouldn't cause re-renders**.
+
+### Q54. Why does [handleLanguageChange](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/SessionPage.jsx#187-198) update both local state AND the Yjs doc?
+**A:**
+```js
+setSelectedLanguage(newLang)
+const newCode = fixStarterCode(...)
+setCode(newCode)
+if (ydoc) setSharedCode(newCode)  // ← sync to Yjs
+```
+If only local state is updated, the other participant's editor would still show the old language's starter code. Calling `setSharedCode` propagates the new starter code to all peers via the Yjs CRDT sync.
+
+### Q55. What is the [getCurrentCode()](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/SessionPage.jsx#153-160) helper and why is it needed?
+**A:**
+```js
+const getCurrentCode = () => {
+  if (ydoc) return getSharedCode()  // Yjs doc (collaborative mode)
+  return code                        // local state (fallback)
+}
+```
+When Yjs is active, the canonical code lives in the Yjs document (which Monaco editor syncs to). The React `code` state may be stale if the other user typed something. [getCurrentCode()](file:///c:/Users/aksha/OneDrive/Desktop/TALENT-IQ/frontend/src/pages/SessionPage.jsx#153-160) always reads from the **source of truth** — Yjs when available, fallback to React state when not.
+
+### Q56. Why is `btoa(unescape(encodeURIComponent(preparedCode)))` used instead of just `btoa(preparedCode)`?
+**A:** `btoa()` can only encode **Latin-1** (ASCII) characters. Unicode characters (e.g., Chinese, emojis in strings) would throw a `DOMException`. The pattern:
+```js
+btoa(unescape(encodeURIComponent(text)))
+```
+Works by:
+1. `encodeURIComponent` → percent-encodes all non-ASCII as `%XX%XX`
+2. `unescape` → converts `%XX` sequences back to raw Latin-1 bytes
+3. `btoa` → Base64-encodes the now-Latin-1 string
+
+This is the standard browser-compatible way to Base64-encode Unicode strings.
+
+### Q57. What does `hard: true` mean in `call.delete({ hard: true })`?
+**A:** Stream video calls can be **soft deleted** (marked inactive but data preserved) or **hard deleted** (data permanently removed). `hard: true` is used when ending a session because there's no reason to retain the call data — it's a completed interview session.
+
+### Q58. How does the confetti work on test pass?
+**A:**
+```js
+const triggerConfetti = () => {
+  confetti({ particleCount: 80, spread: 250, origin: { x: 0.2, y: 0.6 } })
+  confetti({ particleCount: 80, spread: 250, origin: { x: 0.8, y: 0.6 } })
+}
+```
+`canvas-confetti` is called **twice** from different `x` origins (left at 20% and right at 80%) to create a dual-burst effect. This fires only when all test cases pass on "Run" or "Submit".
+
+---
+
+## 📂 Section 16: Project Structure Summary
+
+```
+TALENT-IQ/
+├── backend/src/
+│   ├── server.js              ← Express app + middleware + routes
+│   ├── controllers/           ← Business logic
+│   │   ├── sessionController  ← Create/join/end/invite sessions
+│   │   ├── aiController       ← Groq AI code review
+│   │   ├── codeController     ← Judge0 code execution
+│   │   └── chatController     ← Stream token generation
+│   ├── models/
+│   │   ├── Session.js         ← Session mongoose schema
+│   │   └── User.js            ← User mongoose schema
+│   ├── routes/                ← Route definitions (REST)
+│   ├── middleware/
+│   │   └── protectRoute.js    ← Clerk auth + user lookup
+│   └── lib/
+│       ├── db.js              ← MongoDB connection
+│       ├── stream.js          ← Stream video + chat clients
+│       ├── gemini.js          ← Groq SDK singleton
+│       ├── inngest.js         ← Inngest functions (sync-user, delete-user)
+│       ├── email.js           ← Nodemailer transactional emails
+│       └── env.js             ← Environment variable validation
+│
+└── frontend/src/
+    ├── App.jsx                ← Routes + auth guards
+    ├── pages/
+    │   ├── SessionPage.jsx    ← Main session UI (701 lines)
+    │   ├── DashboardPage.jsx  ← Dashboard with sessions list
+    │   ├── ProblemsPage.jsx   ← Browse problems
+    │   └── ProblemPage.jsx    ← Single problem view
+    ├── hooks/
+    │   ├── useSessions.js     ← TanStack Query hooks for API calls
+    │   ├── useStreamClient.js ← Stream video + chat initialization
+    │   └── useYjsCollaboration.js ← Yjs P2P collaborative editing
+    ├── components/            ← Reusable UI components
+    ├── lib/
+    │   ├── piston.js          ← Code preparation + Judge0 execution
+    │   ├── stream.js          ← Stream client init/disconnect helpers
+    │   └── utils.js           ← Utility helpers
+    └── data/
+        └── problems.js        ← Curated problems dataset
+```

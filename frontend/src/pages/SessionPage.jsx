@@ -1,5 +1,5 @@
 import { useUser } from "@clerk/clerk-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import {
   useEndSession,
@@ -29,6 +29,7 @@ import toast from "react-hot-toast";
 import confetti from "canvas-confetti";
 
 import useStreamClient from "../hooks/useStreamClient";
+import useYjsCollaboration from "../hooks/useYjsCollaboration";
 import { StreamCall, StreamVideo } from "@stream-io/video-react-sdk";
 import VideoCallUI from "../components/VideoCallUI";
 
@@ -116,6 +117,46 @@ function SessionPage() {
     fixStarterCode(problemData?.starterCode?.[selectedLanguage] || "", "javascript")
   );
 
+  // Yjs collaborative editing — uses session callId as room
+  const {
+    ydoc,
+    connected: yjsConnected,
+    peers: yjsPeers,
+    ready: yjsReady,
+    setSharedCode,
+    getSharedCode,
+  } = useYjsCollaboration(session?.callId || null, {
+    name: user?.fullName || user?.firstName || "Anonymous",
+    id: user?.id,
+  });
+
+  // Seed the Yjs document with starter code when everything is ready
+  // Only if the shared doc is empty (first user to load)
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!yjsReady || !ydoc || seededRef.current) return;
+    const starterCode = fixStarterCode(
+      problemData?.starterCode?.[selectedLanguage] || "",
+      selectedLanguage
+    );
+    if (!starterCode) return;
+
+    const ytext = ydoc.getText("monacoContent");
+    // Only seed if document is truly empty (first user in the room)
+    if (ytext.length === 0) {
+      setSharedCode(starterCode);
+    }
+    seededRef.current = true;
+  }, [yjsReady, ydoc, problemData, selectedLanguage, setSharedCode]);
+
+  // Helper to get the current code (from Yjs if active, else local state)
+  const getCurrentCode = () => {
+    if (ydoc) {
+      return getSharedCode();
+    }
+    return code;
+  };
+
   // auto-join session if user is not already a participant and not the host
   useEffect(() => {
     if (!session || !user || loadingSession) return;
@@ -145,7 +186,12 @@ function SessionPage() {
   const handleLanguageChange = (e) => {
     const newLang = e.target.value;
     setSelectedLanguage(newLang);
-    setCode(fixStarterCode(problemData?.starterCode?.[newLang] || "", newLang));
+    const newCode = fixStarterCode(problemData?.starterCode?.[newLang] || "", newLang);
+    setCode(newCode);
+    // Update Yjs shared doc so the other user sees the language change
+    if (ydoc) {
+      setSharedCode(newCode);
+    }
     setOutput(null);
   };
 
@@ -164,7 +210,7 @@ function SessionPage() {
     setOutput(null);
 
     const examples = getExamples();
-    const result = await executeCode(selectedLanguage, code, examples);
+    const result = await executeCode(selectedLanguage, getCurrentCode(), examples);
     setOutput(result);
     setIsRunning(false);
 
@@ -202,7 +248,7 @@ function SessionPage() {
       return;
     }
 
-    const result = await executeCode(selectedLanguage, code, examples);
+    const result = await executeCode(selectedLanguage, getCurrentCode(), examples);
     setOutput(result);
     setIsSubmitting(false);
 
@@ -233,10 +279,11 @@ function SessionPage() {
   };
 
   const handleAiReview = () => {
-    if (!code.trim()) return;
+    const currentCode = getCurrentCode();
+    if (!currentCode.trim()) return;
     reviewMutation.mutate(
       {
-        code,
+        code: currentCode,
         language: selectedLanguage,
         problem: problemData?.title || session?.problem || "",
         difficulty: problemData?.difficulty || session?.difficulty || "",
@@ -433,6 +480,9 @@ function SessionPage() {
                       isSubmitting={isSubmitting}
                       onAiReview={handleAiReview}
                       isReviewing={reviewMutation.isPending}
+                      ydoc={ydoc}
+                      yjsConnected={yjsConnected}
+                      yjsPeers={yjsPeers}
                     />
                   </Panel>
 
