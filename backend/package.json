@@ -22,7 +22,9 @@
     "inngest": "^3.44.3",
     "mongoose": "^8.19.1",
     "nodemailer": "^8.0.1",
-    "stream-chat": "^8.60.0"
+    "stream-chat": "^8.60.0",
+    "ws": "^8.19.0",
+    "yjs": "^13.6.29"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
