@@ -1,52 +1,76 @@
 import nodemailer from "nodemailer";
 import { ENV } from "./env.js";
 
-// Create a fresh transporter each time — avoids stale/dead pooled connections with Gmail
+function ts() {
+  return new Date().toISOString();
+}
+
 function createTransporter() {
   if (!ENV.EMAIL_USER || !ENV.EMAIL_PASS) {
-    console.error("📧 EMAIL_USER or EMAIL_PASS is not set — emails will not be sent.");
+    console.error(`[${ts()}] 📧 FATAL: EMAIL_USER or EMAIL_PASS is not set`);
     return null;
   }
 
   return nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
+    service: "gmail",
     auth: {
       user: ENV.EMAIL_USER,
       pass: ENV.EMAIL_PASS,
     },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
   });
 }
 
 async function sendMail(options) {
-  const maxRetries = 2;
+  const maxRetries = 3;
+  const emailId = Math.random().toString(36).slice(2, 8);
+
+  console.log(`[${ts()}] 📧 [${emailId}] QUEUED: to=${options.to} subject="${options.subject}"`);
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const t = createTransporter(); // fresh transporter every attempt
+    const t = createTransporter();
     if (!t) {
+      console.error(`[${ts()}] 📧 [${emailId}] ABORT: transporter not configured`);
       throw new Error("Email transporter not configured (missing EMAIL_USER or EMAIL_PASS)");
     }
 
     try {
+      console.log(
+        `[${ts()}] 📧 [${emailId}] ATTEMPT ${attempt}/${maxRetries}: verifying connection...`
+      );
+      await t.verify();
+      console.log(
+        `[${ts()}] 📧 [${emailId}] ATTEMPT ${attempt}/${maxRetries}: SMTP verified, sending...`
+      );
+
       const info = await t.sendMail(options);
-      console.log(`📧 Email sent to ${options.to} (messageId: ${info.messageId})`);
+
+      console.log(
+        `[${ts()}] 📧 [${emailId}] SENT: to=${options.to} messageId=${info.messageId} response="${info.response}" accepted=${JSON.stringify(info.accepted)} rejected=${JSON.stringify(info.rejected)}`
+      );
       return info;
     } catch (error) {
       console.error(
-        `📧 Attempt ${attempt}/${maxRetries} failed for ${options.to}:`,
-        error.code || error.message
+        `[${ts()}] 📧 [${emailId}] FAIL attempt ${attempt}/${maxRetries}: code=${error.code || "N/A"} msg="${error.message}" command=${error.command || "N/A"} responseCode=${error.responseCode || "N/A"}`
       );
-      if (attempt === maxRetries) {
-        throw error;
+      if (attempt < maxRetries) {
+        const delay = attempt * 3000;
+        console.log(`[${ts()}] 📧 [${emailId}] RETRY in ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
       }
-      // Brief delay before retry
-      await new Promise((r) => setTimeout(r, 2000));
+    } finally {
+      try {
+        t.close();
+      } catch {}
     }
   }
+
+  console.error(
+    `[${ts()}] 📧 [${emailId}] EXHAUSTED: all ${maxRetries} attempts failed for ${options.to}`
+  );
+  throw new Error(`Email delivery failed after ${maxRetries} attempts for ${options.to}`);
 }
 
 export async function sendWelcomeEmail(user) {
@@ -76,15 +100,15 @@ export async function sendWelcomeEmail(user) {
   `;
 
   try {
+    console.log(`[${ts()}] 📧 WELCOME: triggering for ${user.email}`);
     await sendMail({
       from: `"Talent IQ" <${ENV.EMAIL_USER}>`,
       to: user.email,
       subject: "🎉 Welcome to Talent IQ!",
       html,
     });
-    console.log("Welcome email sent to:", user.email);
   } catch (error) {
-    console.error("Failed to send welcome email:", error.message);
+    console.error(`[${ts()}] 📧 WELCOME FAILED: ${user.email} — ${error.message}`);
   }
 }
 
@@ -115,15 +139,15 @@ export async function sendSessionCreatedEmail(host, session) {
   `;
 
   try {
+    console.log(`[${ts()}] 📧 SESSION_CREATED: triggering for ${host.email}`);
     await sendMail({
       from: `"Talent IQ" <${ENV.EMAIL_USER}>`,
       to: host.email,
       subject: `🚀 Session Created: ${session.problem}`,
       html,
     });
-    console.log("Session created email sent to:", host.email);
   } catch (error) {
-    console.error("Failed to send session created email:", error.message);
+    console.error(`[${ts()}] 📧 SESSION_CREATED FAILED: ${host.email} — ${error.message}`);
   }
 }
 
@@ -155,15 +179,15 @@ export async function sendSessionJoinedEmail(host, participant, session) {
   `;
 
   try {
+    console.log(`[${ts()}] 📧 SESSION_JOINED: triggering for ${host.email}`);
     await sendMail({
       from: `"Talent IQ" <${ENV.EMAIL_USER}>`,
       to: host.email,
       subject: `👋 ${participant.name} joined your session: ${session.problem}`,
       html,
     });
-    console.log("Session joined email sent to host:", host.email);
   } catch (error) {
-    console.error("Failed to send session joined email:", error.message);
+    console.error(`[${ts()}] 📧 SESSION_JOINED FAILED: ${host.email} — ${error.message}`);
   }
 }
 
@@ -197,14 +221,14 @@ export async function sendInviteEmail(inviterName, recipientEmail, session) {
   `;
 
   try {
+    console.log(`[${ts()}] 📧 INVITE: triggering for ${recipientEmail}`);
     await sendMail({
       from: `"Talent IQ" <${ENV.EMAIL_USER}>`,
       to: recipientEmail,
       subject: `📩 ${inviterName} invited you to a coding session!`,
       html,
     });
-    console.log("Invite email sent to:", recipientEmail);
   } catch (error) {
-    console.error("Failed to send invite email:", error.message);
+    console.error(`[${ts()}] 📧 INVITE FAILED: ${recipientEmail} — ${error.message}`);
   }
 }
