@@ -9,6 +9,14 @@ function getRandomColor() {
 
 // Build the WebSocket URL for Yjs sync
 function getWsUrl(roomId) {
+  const apiUrl = import.meta.env.VITE_API_URL;
+  if (apiUrl) {
+    // Production: derive WS URL from the backend API URL (e.g. https://backend.onrender.com/api -> wss://backend.onrender.com/yjs/room)
+    const url = new URL(apiUrl);
+    const protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${url.host}/yjs/${roomId}`;
+  }
+  // Dev: use Vite proxy on same host
   const loc = window.location;
   const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${loc.host}/yjs/${roomId}`;
