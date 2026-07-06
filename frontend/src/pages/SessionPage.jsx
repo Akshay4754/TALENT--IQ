@@ -91,7 +91,7 @@ function SessionPage() {
 
   const { data: sessionData, isLoading: loadingSession, refetch } = useSessionById(id);
 
-  const joinSessionMutation = useJoinSession();
+  const { mutate: joinSession } = useJoinSession();
   const endSessionMutation = useEndSession();
   const inviteMutation = useInviteToSession();
   const reviewMutation = useReviewCode();
@@ -116,6 +116,7 @@ function SessionPage() {
   const [code, setCode] = useState(
     fixStarterCode(problemData?.starterCode?.[selectedLanguage] || "", "javascript")
   );
+  const joinRequestedRef = useRef(false);
 
   // Yjs collaborative editing — uses session callId as room
   const {
@@ -160,12 +161,20 @@ function SessionPage() {
   // auto-join session if user is not already a participant and not the host
   useEffect(() => {
     if (!session || !user || loadingSession) return;
-    if (isHost || isParticipant) return;
+    if (isHost || isParticipant) {
+      joinRequestedRef.current = false;
+      return;
+    }
+    if (joinRequestedRef.current) return;
 
-    joinSessionMutation.mutate(id, { onSuccess: refetch });
-
-    // remove the joinSessionMutation, refetch from dependencies to avoid infinite loop
-  }, [session, user, loadingSession, isHost, isParticipant, id]);
+    joinRequestedRef.current = true;
+    joinSession(id, {
+      onSuccess: refetch,
+      onError: () => {
+        joinRequestedRef.current = false;
+      },
+    });
+  }, [session, user, loadingSession, isHost, isParticipant, id, joinSession, refetch]);
 
   // redirect the "participant" when session ends
   useEffect(() => {
@@ -185,14 +194,20 @@ function SessionPage() {
 
   const handleLanguageChange = (e) => {
     const newLang = e.target.value;
+    const nextCode = fixStarterCode(problemData?.starterCode?.[newLang] || "", newLang);
     setSelectedLanguage(newLang);
-    const newCode = fixStarterCode(problemData?.starterCode?.[newLang] || "", newLang);
-    setCode(newCode);
-    // Update Yjs shared doc so the other user sees the language change
+    setCode(nextCode);
     if (ydoc) {
-      setSharedCode(newCode);
+      setSharedCode(nextCode);
     }
     setOutput(null);
+    setIsAccepted(false);
+  };
+
+  const handleCodeChange = (value = "") => {
+    const nextCode = value || "";
+    setCode(nextCode);
+    setIsAccepted(false);
   };
 
   const getExamples = () =>
@@ -474,7 +489,7 @@ function SessionPage() {
                       code={code}
                       isRunning={isRunning}
                       onLanguageChange={handleLanguageChange}
-                      onCodeChange={(value) => setCode(value)}
+                      onCodeChange={handleCodeChange}
                       onRunCode={handleRunCode}
                       onSubmit={handleSubmit}
                       isSubmitting={isSubmitting}
@@ -524,7 +539,11 @@ function SessionPage() {
                 <div className="h-full">
                   <StreamVideo client={streamClient}>
                     <StreamCall call={call}>
-                      <VideoCallUI chatClient={chatClient} channel={channel} />
+                      <VideoCallUI
+                        chatClient={chatClient}
+                        channel={channel}
+                        expectedParticipantCount={session?.participant ? 2 : 1}
+                      />
                     </StreamCall>
                   </StreamVideo>
                 </div>

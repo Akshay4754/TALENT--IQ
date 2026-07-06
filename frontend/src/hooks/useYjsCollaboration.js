@@ -82,7 +82,9 @@ export default function useYjsCollaboration(roomId, userInfo) {
             // Could track remote users here if needed
             setPeers((p) => Math.max(p, 2));
           }
-        } catch {}
+        } catch (error) {
+          console.error("Failed to process Yjs message:", error);
+        }
       };
 
       ws.onclose = () => {
@@ -114,7 +116,7 @@ export default function useYjsCollaboration(roomId, userInfo) {
       setReady(false);
       setPeers(1);
     };
-  }, [roomId, userInfo?.id]);
+  }, [roomId, userInfo?.id, userInfo?.name]);
 
   const setSharedCode = useCallback((newCode) => {
     const ydoc = ydocRef.current;

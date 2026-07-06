@@ -12,11 +12,12 @@ import { Channel, Chat, MessageInput, MessageList, Thread, Window } from "stream
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "stream-chat-react/dist/css/v2/index.css";
 
-function VideoCallUI({ chatClient, channel }) {
+function VideoCallUI({ chatClient, channel, expectedParticipantCount = 1 }) {
   const navigate = useNavigate();
   const { useCallCallingState, useParticipantCount } = useCallStateHooks();
   const callingState = useCallCallingState();
   const participantCount = useParticipantCount();
+  const visibleParticipantCount = participantCount || Math.max(1, expectedParticipantCount);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
   if (callingState === CallingState.JOINING) {
@@ -38,7 +39,8 @@ function VideoCallUI({ chatClient, channel }) {
           <div className="flex items-center gap-2">
             <UsersIcon className="w-5 h-5 text-primary" />
             <span className="font-semibold">
-              {participantCount} {participantCount === 1 ? "participant" : "participants"}
+              {visibleParticipantCount}{" "}
+              {visibleParticipantCount === 1 ? "participant" : "participants"}
             </span>
           </div>
           {chatClient && channel && (

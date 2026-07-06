@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { MemorySessionModel } from "../lib/memoryStore.js";
 
 const sessionSchema = new mongoose.Schema(
   {
@@ -35,5 +36,19 @@ const sessionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-const Session = mongoose.model("Session", sessionSchema);
+const MongooseSession = mongoose.models.Session || mongoose.model("Session", sessionSchema);
+const useMemory = () => globalThis.__TALENT_IQ_USE_MEMORY_DB === true;
+
+const Session = {
+  create(data) {
+    return useMemory() ? MemorySessionModel.create(data) : MongooseSession.create(data);
+  },
+  find(filter) {
+    return useMemory() ? MemorySessionModel.find(filter) : MongooseSession.find(filter);
+  },
+  findById(id) {
+    return useMemory() ? MemorySessionModel.findById(id) : MongooseSession.findById(id);
+  },
+};
+
 export default Session;

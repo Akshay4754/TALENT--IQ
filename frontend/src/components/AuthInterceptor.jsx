@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/clerk-react";
 import axiosInstance from "../lib/axios";
 
@@ -9,6 +9,7 @@ import axiosInstance from "../lib/axios";
  */
 function AuthInterceptor({ children }) {
   const { getToken } = useAuth();
+  const [isInterceptorReady, setIsInterceptorReady] = useState(false);
 
   useEffect(() => {
     const interceptor = axiosInstance.interceptors.request.use(async (config) => {
@@ -23,8 +24,15 @@ function AuthInterceptor({ children }) {
       return config;
     });
 
-    return () => axiosInstance.interceptors.request.eject(interceptor);
+    setIsInterceptorReady(true);
+
+    return () => {
+      axiosInstance.interceptors.request.eject(interceptor);
+      setIsInterceptorReady(false);
+    };
   }, [getToken]);
+
+  if (!isInterceptorReady) return null;
 
   return children;
 }
