@@ -36,7 +36,7 @@ function normalizeClientUrl(clientUrl) {
 
 function getClientUrl(clientUrl) {
   return (
-    normalizeClientUrl(clientUrl) || normalizeClientUrl(ENV.CLIENT_URL) || "http://localhost:5173"
+    normalizeClientUrl(ENV.CLIENT_URL) || normalizeClientUrl(clientUrl) || "http://localhost:5173"
   );
 }
 
