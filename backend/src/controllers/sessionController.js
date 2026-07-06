@@ -3,11 +3,16 @@ import Session from "../models/Session.js";
 import User from "../models/User.js";
 import { sendSessionCreatedEmail, sendSessionJoinedEmail, sendInviteEmail } from "../lib/email.js";
 
+function getClientUrlFromRequest(req) {
+  return req.get("origin") || req.get("referer");
+}
+
 export async function createSession(req, res) {
   try {
     const { problem, difficulty } = req.body;
     const userId = req.user._id;
     const clerkId = req.user.clerkId;
+    const clientUrl = getClientUrlFromRequest(req);
 
     if (!problem || !difficulty) {
       return res.status(400).json({ message: "Problem and difficulty are required" });
@@ -41,7 +46,7 @@ export async function createSession(req, res) {
     // Send email in background (don't block response)
     User.findById(userId).then((host) => {
       if (host?.email) {
-        sendSessionCreatedEmail(host, session).catch((e) =>
+        sendSessionCreatedEmail(host, session, clientUrl).catch((e) =>
           console.error("Email send error (create):", e.message)
         );
       }
@@ -108,6 +113,7 @@ export async function joinSession(req, res) {
     const { id } = req.params;
     const userId = req.user._id;
     const clerkId = req.user.clerkId;
+    const clientUrl = getClientUrlFromRequest(req);
 
     const session = await Session.findById(id);
 
@@ -138,7 +144,7 @@ export async function joinSession(req, res) {
       User.findById(userId).select("name email"),
     ]).then(([host, participant]) => {
       if (host?.email) {
-        sendSessionJoinedEmail(host, participant, session).catch((e) =>
+        sendSessionJoinedEmail(host, participant, session, clientUrl).catch((e) =>
           console.error("Email send error (join):", e.message)
         );
       }
@@ -191,6 +197,7 @@ export async function inviteToSession(req, res) {
     const { id } = req.params;
     const { email } = req.body;
     const userId = req.user._id;
+    const clientUrl = getClientUrlFromRequest(req);
 
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
@@ -209,7 +216,7 @@ export async function inviteToSession(req, res) {
     User.findById(userId)
       .select("name email")
       .then((inviter) => {
-        sendInviteEmail(inviter.name, email, session).catch((e) =>
+        sendInviteEmail(inviter.name, email, session, clientUrl).catch((e) =>
           console.error("Email send error (invite):", e.message)
         );
       });

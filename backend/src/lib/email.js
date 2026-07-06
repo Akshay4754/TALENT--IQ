@@ -23,6 +23,27 @@ function createTransporter() {
   });
 }
 
+function normalizeClientUrl(clientUrl) {
+  if (!clientUrl) return null;
+
+  try {
+    const url = new URL(clientUrl);
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function getClientUrl(clientUrl) {
+  return (
+    normalizeClientUrl(clientUrl) || normalizeClientUrl(ENV.CLIENT_URL) || "http://localhost:5173"
+  );
+}
+
+function getSessionUrl(session, clientUrl) {
+  return `${getClientUrl(clientUrl)}/session/${session._id}`;
+}
+
 async function sendMail(options) {
   const maxRetries = 3;
   const emailId = Math.random().toString(36).slice(2, 8);
@@ -73,7 +94,8 @@ async function sendMail(options) {
   throw new Error(`Email delivery failed after ${maxRetries} attempts for ${options.to}`);
 }
 
-export async function sendWelcomeEmail(user) {
+export async function sendWelcomeEmail(user, clientUrl) {
+  const dashboardUrl = `${getClientUrl(clientUrl)}/dashboard`;
   const html = `
     <div style="font-family: 'Segoe UI', sans-serif; max-width: 600px; margin: auto; background: #1a1a2e; color: #e0e0e0; border-radius: 12px; overflow: hidden;">
       <div style="background: linear-gradient(135deg, #16a34a, #059669); padding: 32px; text-align: center;">
@@ -90,7 +112,7 @@ export async function sendWelcomeEmail(user) {
           <p style="margin: 4px 0;">👤 Name: ${user.name}</p>
         </div>
         <div style="text-align: center; margin-top: 24px;">
-          <a href="${ENV.CLIENT_URL}/dashboard" style="background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px;">Go to Dashboard</a>
+          <a href="${dashboardUrl}" style="background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px;">Go to Dashboard</a>
         </div>
       </div>
       <div style="background: #0f0f23; padding: 16px; text-align: center; font-size: 12px; color: #888;">
@@ -112,7 +134,8 @@ export async function sendWelcomeEmail(user) {
   }
 }
 
-export async function sendSessionCreatedEmail(host, session) {
+export async function sendSessionCreatedEmail(host, session, clientUrl) {
+  const sessionUrl = getSessionUrl(session, clientUrl);
   const html = `
     <div style="font-family: 'Segoe UI', sans-serif; max-width: 600px; margin: auto; background: #1a1a2e; color: #e0e0e0; border-radius: 12px; overflow: hidden;">
       <div style="background: linear-gradient(135deg, #16a34a, #059669); padding: 32px; text-align: center;">
@@ -129,7 +152,7 @@ export async function sendSessionCreatedEmail(host, session) {
           <p style="margin: 4px 0;">📅 Created: ${new Date(session.createdAt).toLocaleString()}</p>
         </div>
         <div style="text-align: center; margin-top: 24px;">
-          <a href="${ENV.CLIENT_URL}/session/${session._id}" style="background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px;">Open Session</a>
+          <a href="${sessionUrl}" style="background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px;">Open Session</a>
         </div>
       </div>
       <div style="background: #0f0f23; padding: 16px; text-align: center; font-size: 12px; color: #888;">
@@ -151,7 +174,8 @@ export async function sendSessionCreatedEmail(host, session) {
   }
 }
 
-export async function sendSessionJoinedEmail(host, participant, session) {
+export async function sendSessionJoinedEmail(host, participant, session, clientUrl) {
+  const sessionUrl = getSessionUrl(session, clientUrl);
   const html = `
     <div style="font-family: 'Segoe UI', sans-serif; max-width: 600px; margin: auto; background: #1a1a2e; color: #e0e0e0; border-radius: 12px; overflow: hidden;">
       <div style="background: linear-gradient(135deg, #16a34a, #059669); padding: 32px; text-align: center;">
@@ -169,7 +193,7 @@ export async function sendSessionJoinedEmail(host, participant, session) {
           <p style="margin: 4px 0;">👥 Participants: 2/2</p>
         </div>
         <div style="text-align: center; margin-top: 24px;">
-          <a href="${ENV.CLIENT_URL}/session/${session._id}" style="background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px;">Go to Session</a>
+          <a href="${sessionUrl}" style="background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px;">Go to Session</a>
         </div>
       </div>
       <div style="background: #0f0f23; padding: 16px; text-align: center; font-size: 12px; color: #888;">
@@ -191,7 +215,8 @@ export async function sendSessionJoinedEmail(host, participant, session) {
   }
 }
 
-export async function sendInviteEmail(inviterName, recipientEmail, session) {
+export async function sendInviteEmail(inviterName, recipientEmail, session, clientUrl) {
+  const sessionUrl = getSessionUrl(session, clientUrl);
   const html = `
     <div style="font-family: 'Segoe UI', sans-serif; max-width: 600px; margin: auto; background: #1a1a2e; color: #e0e0e0; border-radius: 12px; overflow: hidden;">
       <div style="background: linear-gradient(135deg, #16a34a, #059669); padding: 32px; text-align: center;">
@@ -208,7 +233,7 @@ export async function sendInviteEmail(inviterName, recipientEmail, session) {
           <p style="margin: 4px 0;">🔗 Status: ${session.status}</p>
         </div>
         <div style="text-align: center; margin-top: 24px;">
-          <a href="${ENV.CLIENT_URL}/session/${session._id}" style="background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px;">Join Session</a>
+          <a href="${sessionUrl}" style="background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px;">Join Session</a>
         </div>
         <p style="font-size: 13px; color: #888; margin-top: 24px;">
           You'll need a Talent IQ account to join. If you don't have one, you'll be prompted to sign up.
